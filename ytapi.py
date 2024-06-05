@@ -3,11 +3,10 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
 import re
 
-app = Flask(__name__)
 
-@app.route('/transcript', methods=['GET'])
-def get_transcript():
-    youtube_url = request.args.get('url')
+
+
+def get_transcript(youtube_url):
     if not youtube_url:
         return jsonify({'error': 'No YouTube URL provided'}), 400
     
@@ -26,5 +25,6 @@ def get_transcript():
     except (TranscriptsDisabled, NoTranscriptFound):
         return jsonify({'error': 'Transcript not available for this video'}), 404
 
-if __name__ == '__main__':
-    app.run(debug=True)
+
+a=get_transcript("https://www.youtube.com/watch?v=8ZtInClXe1Q")
+print(a)
