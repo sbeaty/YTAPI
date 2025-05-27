@@ -28,7 +28,7 @@ def get_channel_id(handle: str) -> Optional[str]:
     return None
 
 def get_recent_videos(channel_id: str, max_videos: int = 10) -> list:
-    """Get the most recent videos from a channel"""
+    """Get the most recent full-format videos from a channel (no shorts)"""
     try:
         request = youtube.channels().list(
             part='contentDetails',
@@ -41,11 +41,14 @@ def get_recent_videos(channel_id: str, max_videos: int = 10) -> list:
 
         uploads_playlist_id = response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
 
-        videos = []
+        all_videos = []
         next_page_token = None
         
-        while len(videos) < max_videos:
-            items_to_fetch = min(50, max_videos - len(videos))
+        # Fetch more videos initially to account for filtering out shorts
+        fetch_limit = max_videos * 3  # Get 3x more to filter
+        
+        while len(all_videos) < fetch_limit:
+            items_to_fetch = min(50, fetch_limit - len(all_videos))
             
             playlist_items_response = youtube.playlistItems().list(
                 part='snippet',
@@ -59,7 +62,7 @@ def get_recent_videos(channel_id: str, max_videos: int = 10) -> list:
                 video_url = f"https://www.youtube.com/watch?v={video_id}"
                 video_title = video['snippet']['title']
                 video_published = video['snippet']['publishedAt']
-                videos.append({
+                all_videos.append({
                     'id': video_id,
                     'url': video_url, 
                     'title': video_title,
@@ -70,7 +73,17 @@ def get_recent_videos(channel_id: str, max_videos: int = 10) -> list:
             if not next_page_token:
                 break
 
-        return videos[:max_videos]
+        # Filter out shorts
+        all_video_ids = [video['id'] for video in all_videos]
+        filtered_video_ids = filter_out_shorts(all_video_ids)
+        
+        # Build final video list maintaining chronological order
+        filtered_videos = []
+        for video in all_videos:
+            if video['id'] in filtered_video_ids and len(filtered_videos) < max_videos:
+                filtered_videos.append(video)
+        
+        return filtered_videos
 
     except HttpError as e:
         print(f"An HTTP error occurred: {e}")
@@ -133,36 +146,105 @@ def get_video_transcript(video_id: str) -> Optional[str]:
         print(f'Error fetching transcript for video {video_id}: {str(e)}')
         return None
 
-def search_videos_by_query(query: str, max_results: int = 10) -> list:
-    """Search for videos by query and return most recent results"""
+def filter_out_shorts(video_ids: list) -> list:
+    """Filter out YouTube Shorts (videos <= 60 seconds) from a list of video IDs"""
+    if not video_ids:
+        return []
+    
     try:
+        # Get video details including duration for up to 50 videos at once
+        filtered_ids = []
+        for i in range(0, len(video_ids), 50):
+            batch = video_ids[i:i+50]
+            video_ids_str = ','.join(batch)
+            
+            request = youtube.videos().list(
+                part='contentDetails',
+                id=video_ids_str
+            )
+            response = request.execute()
+            
+            for video in response['items']:
+                duration = video['contentDetails']['duration']
+                # Parse ISO 8601 duration (PT#M#S format)
+                # PT60S = 60 seconds, PT1M = 60 seconds, PT1M30S = 90 seconds
+                if 'PT' in duration:
+                    duration_clean = duration.replace('PT', '')
+                    total_seconds = 0
+                    
+                    if 'H' in duration_clean:
+                        # Has hours, definitely not a short
+                        filtered_ids.append(video['id'])
+                        continue
+                    
+                    if 'M' in duration_clean:
+                        minutes_part = duration_clean.split('M')[0]
+                        try:
+                            minutes = int(minutes_part)
+                            total_seconds += minutes * 60
+                            duration_clean = duration_clean.split('M')[1]
+                        except ValueError:
+                            continue
+                    
+                    if 'S' in duration_clean:
+                        seconds_part = duration_clean.replace('S', '')
+                        try:
+                            if seconds_part:
+                                seconds = int(seconds_part)
+                                total_seconds += seconds
+                        except ValueError:
+                            continue
+                    
+                    # Only include videos longer than 60 seconds
+                    if total_seconds > 60:
+                        filtered_ids.append(video['id'])
+        
+        return filtered_ids
+        
+    except HttpError as e:
+        print(f"An HTTP error occurred while filtering shorts: {e}")
+        return video_ids  # Return original list if filtering fails
+
+def search_videos_by_query(query: str, max_results: int = 10) -> list:
+    """Search for videos by query and return most recent full-format results (no shorts)"""
+    try:
+        # Request more videos initially to account for filtering out shorts
+        search_limit = min(max_results * 3, 50)  # Get 3x more to filter
+        
         request = youtube.search().list(
             part='snippet',
             q=query,
             type='video',
             order='date',
-            maxResults=min(max_results, 50),
+            maxResults=search_limit,
             publishedAfter='2020-01-01T00:00:00Z'
         )
         response = request.execute()
         
-        videos = []
+        # Collect all video IDs first
+        all_video_ids = []
+        video_data_map = {}
+        
         for item in response['items']:
             video_id = item['id']['videoId']
-            video_url = f"https://www.youtube.com/watch?v={video_id}"
-            video_title = item['snippet']['title']
-            video_published = item['snippet']['publishedAt']
-            channel_title = item['snippet']['channelTitle']
-            channel_id = item['snippet']['channelId']
-            
-            videos.append({
+            all_video_ids.append(video_id)
+            video_data_map[video_id] = {
                 'id': video_id,
-                'url': video_url,
-                'title': video_title,
-                'published': video_published,
-                'channel_title': channel_title,
-                'channel_id': channel_id
-            })
+                'url': f"https://www.youtube.com/watch?v={video_id}",
+                'title': item['snippet']['title'],
+                'published': item['snippet']['publishedAt'],
+                'channel_title': item['snippet']['channelTitle'],
+                'channel_id': item['snippet']['channelId']
+            }
+        
+        # Filter out shorts
+        filtered_video_ids = filter_out_shorts(all_video_ids)
+        
+        # Build final video list maintaining chronological order
+        videos = []
+        for video_id in all_video_ids:  # Maintain original order
+            if video_id in filtered_video_ids and len(videos) < max_results:
+                videos.append(video_data_map[video_id])
         
         return videos
         
