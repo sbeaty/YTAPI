@@ -1,0 +1,15 @@
+{
+    "title": "Scrape YouTube Transcript",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "youtube_link": {
+            "title": "YouTube Video Link",
+            "type": "string",
+            "description": "The URL of the YouTube video for which you want to scrape the transcript.",
+            "editor": "textfield",
+            "prefill": "https://youtu.be/dKfdRTAqX0c?si=AKDSxQwOqiV21exW"
+        }
+    },
+    "required": ["youtube_link"]
+}
