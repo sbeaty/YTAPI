@@ -133,6 +133,43 @@ def get_video_transcript(video_id: str) -> Optional[str]:
         print(f'Error fetching transcript for video {video_id}: {str(e)}')
         return None
 
+def search_videos_by_query(query: str, max_results: int = 10) -> list:
+    """Search for videos by query and return most recent results"""
+    try:
+        request = youtube.search().list(
+            part='snippet',
+            q=query,
+            type='video',
+            order='date',
+            maxResults=min(max_results, 50),
+            publishedAfter='2020-01-01T00:00:00Z'
+        )
+        response = request.execute()
+        
+        videos = []
+        for item in response['items']:
+            video_id = item['id']['videoId']
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            video_title = item['snippet']['title']
+            video_published = item['snippet']['publishedAt']
+            channel_title = item['snippet']['channelTitle']
+            channel_id = item['snippet']['channelId']
+            
+            videos.append({
+                'id': video_id,
+                'url': video_url,
+                'title': video_title,
+                'published': video_published,
+                'channel_title': channel_title,
+                'channel_id': channel_id
+            })
+        
+        return videos
+        
+    except HttpError as e:
+        print(f"An HTTP error occurred during search: {e}")
+        return []
+
 @app.get("/")
 async def root():
     return {"message": "YouTube Comments & Transcripts API", "version": "1.0.0"}
@@ -256,6 +293,63 @@ async def get_video_data(
         "transcript": transcript,
         "has_transcript": transcript is not None
     }
+    
+    return result
+
+@app.get("/search")
+async def search_and_analyze(
+    query: str = Query(description="Search query for YouTube videos"),
+    top_n: int = Query(default=5, ge=1, le=20, description="Number of most recent videos to process"),
+    max_comments_per_video: int = Query(default=100, ge=1, le=1000, description="Maximum comments per video"),
+    include_transcripts: bool = Query(default=True, description="Whether to include video transcripts")
+):
+    """Search for videos by query and get comments and transcripts from top N most recent results"""
+    
+    # Search for videos
+    videos = search_videos_by_query(query, top_n)
+    if not videos:
+        raise HTTPException(status_code=404, detail=f"No videos found for query: '{query}'")
+    
+    # Process each video
+    result = {
+        "query": query,
+        "videos_found": len(videos),
+        "videos_processed": len(videos),
+        "include_transcripts": include_transcripts,
+        "videos": {}
+    }
+    
+    total_comments = 0
+    videos_with_transcripts = 0
+    
+    for video in videos:
+        video_data = {
+            "video_info": video,
+            "comments": [],
+            "comment_count": 0,
+            "transcript": None,
+            "has_transcript": False
+        }
+        
+        # Get comments
+        comments = get_video_comments(video['id'], max_comments_per_video)
+        video_data["comments"] = comments
+        video_data["comment_count"] = len(comments)
+        total_comments += len(comments)
+        
+        # Get transcript if requested
+        if include_transcripts:
+            transcript = get_video_transcript(video['id'])
+            video_data["transcript"] = transcript
+            video_data["has_transcript"] = transcript is not None
+            if transcript:
+                videos_with_transcripts += 1
+        
+        result["videos"][video['id']] = video_data
+    
+    result["total_comments"] = total_comments
+    if include_transcripts:
+        result["videos_with_transcripts"] = videos_with_transcripts
     
     return result
 
