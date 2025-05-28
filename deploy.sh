@@ -11,7 +11,7 @@ docker rm ytapi-container 2>/dev/null || true
 
 # Pull the latest image
 echo "📦 Pulling latest Docker image..."
-docker pull sbeaty/ytapi:latest
+docker pull vladsbeat/ytapi:latest
 
 # Run the new container
 echo "🔄 Starting new container..."
@@ -19,7 +19,7 @@ docker run -d \
   --name ytapi-container \
   --restart unless-stopped \
   -p 8001:8001 \
-  sbeaty/ytapi:latest
+  vladsbeat/ytapi:latest
 
 # Check if container is running
 echo "✅ Checking container status..."
