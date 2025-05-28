@@ -60,9 +60,23 @@ jobs:
         script: |
           echo "🚀 Starting automatic deployment..."
           
-          # Stop and remove existing container
+          # Check for existing container and force stop/remove
+          echo "🔍 Checking for existing containers..."
+          docker ps -a | grep ytapi-container || echo "No existing container found"
+          
+          # Force stop and remove existing container
+          echo "⏹️ Stopping existing container..."
           docker stop ytapi-container 2>/dev/null || true
-          docker rm ytapi-container 2>/dev/null || true
+          docker rm -f ytapi-container 2>/dev/null || true
+          
+          # Verify container is gone
+          if docker ps -a | grep -q ytapi-container; then
+            echo "❌ Failed to remove existing container"
+            docker ps -a | grep ytapi-container
+            exit 1
+          else
+            echo "✅ Old container removed successfully"
+          fi
           
           # Remove old image to save space
           docker rmi vladsbeat/ytapi:latest 2>/dev/null || true
