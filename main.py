@@ -154,18 +154,26 @@ def get_video_transcript(video_id: str) -> Optional[str]:
     if not TRANSCRIPT_API_AVAILABLE:
         print(f"❌ YouTube Transcript API not available for video {video_id}")
         return None
-        
+    
+    print(f"🔍 Attempting to fetch transcript for video {video_id}")
+    
     try:
         # Use the simple approach that works in the notebook
+        print(f"📞 Calling YouTubeTranscriptApi.get_transcript({video_id})")
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+        print(f"✅ Got transcript with {len(transcript_list)} entries")
+        
         transcript_text = ''
         for item in transcript_list:
             timestamp = item['start']
             text = item['text']
             transcript_text += f'[{timestamp}] {text}\n'
+        
+        print(f"📝 Built transcript text: {len(transcript_text)} characters")
         return transcript_text
     except Exception as e:
-        print(f'Error fetching transcript for video {video_id}: {str(e)}')
+        print(f'❌ Error fetching transcript for video {video_id}: {str(e)}')
+        print(f'❌ Exception type: {type(e).__name__}')
         return None
 
 def filter_out_shorts(video_ids: list) -> list:
