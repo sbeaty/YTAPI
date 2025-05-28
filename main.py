@@ -638,5 +638,319 @@ async def search_and_analyze(
     
     return result
 
+# Additional Flask-style endpoints for compatibility
+@app.get("/transcript")
+async def get_transcript_endpoint(video_link: str):
+    """Get transcript for a YouTube video with timestamps"""
+    try:
+        # Extract video ID from URL
+        if 'v=' not in video_link:
+            raise HTTPException(status_code=400, detail="Invalid YouTube video link")
+        
+        video_id = video_link.split('v=')[1].split('&')[0]
+        transcript_text = get_transcript_robust(video_id)
+        
+        if transcript_text:
+            return {"transcript": transcript_text}
+        else:
+            raise HTTPException(status_code=404, detail="No transcript available for this video. The video may not have captions enabled or may be restricted.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching transcript: {str(e)}")
+
+@app.get("/simple-search")
+async def simple_search(query: str, maxResults: int = 5):
+    """Simple search without subscriber filtering"""
+    try:
+        youtube_request = youtube.search().list(
+            part="snippet",
+            q=query,
+            type="video",
+            maxResults=maxResults
+        )
+        response = youtube_request.execute()
+        
+        results = []
+        for item in response.get('items', []):
+            results.append({
+                'title': item['snippet']['title'],
+                'videoId': item['id']['videoId'],
+                'url': f"https://www.youtube.com/watch?v={item['id']['videoId']}"
+            })
+        
+        return {"results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/video-details/{video_id}")
+async def get_video_details(video_id: str):
+    """Get detailed information about a YouTube video"""
+    try:
+        youtube_request = youtube.videos().list(
+            part="snippet,contentDetails,statistics",
+            id=video_id
+        )
+        response = youtube_request.execute()
+        
+        if not response.get('items'):
+            raise HTTPException(status_code=404, detail="No video details found for the given video ID")
+        
+        video_info = response['items'][0]
+        
+        details = {
+            'title': video_info['snippet']['title'],
+            'description': video_info['snippet']['description'],
+            'publishedAt': video_info['snippet']['publishedAt'],
+            'viewCount': video_info['statistics'].get('viewCount'),
+            'likeCount': video_info['statistics'].get('likeCount'),
+            'commentCount': video_info['statistics'].get('commentCount'),
+            'duration': video_info['contentDetails'].get('duration'),
+            'channelTitle': video_info['snippet']['channelTitle'],
+            'channelId': video_info['snippet']['channelId']
+        }
+        
+        return {"details": details}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/video-comments/{video_id}")
+async def get_video_comments_simple(video_id: str, maxResults: int = 5):
+    """Get comments for a YouTube video"""
+    try:
+        youtube_request = youtube.commentThreads().list(
+            part="snippet",
+            videoId=video_id,
+            maxResults=maxResults,
+            textFormat="plainText"
+        )
+        response = youtube_request.execute()
+        
+        comments = []
+        for item in response.get('items', []):
+            comment = item['snippet']['topLevelComment']['snippet']
+            comments.append({
+                'author': comment['authorDisplayName'],
+                'text': comment['textDisplay'],
+                'publishedAt': comment['publishedAt'],
+                'likeCount': comment['likeCount']
+            })
+        
+        return {"comments": comments}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/channel-id")
+async def get_channel_id_endpoint(handle: str):
+    """Get channel ID from channel handle"""
+    try:
+        url = f'https://www.googleapis.com/youtube/v3/channels?part=id&forHandle={handle}&key={api_key}'
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if 'items' in data and len(data['items']) > 0:
+                return {"channel_id": data['items'][0]['id']}
+            else:
+                raise HTTPException(status_code=404, detail=f"No channel found with the handle: {handle}")
+        else:
+            raise HTTPException(status_code=500, detail=f"Error retrieving channel ID. Status code: {response.status_code}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/channel-videos")
+async def get_channel_videos_endpoint(channel_id: str):
+    """Get all videos from a YouTube channel"""
+    try:
+        request_obj = youtube.channels().list(
+            part='contentDetails',
+            id=channel_id
+        )
+        response = request_obj.execute()
+
+        if 'items' not in response or len(response['items']) == 0:
+            raise HTTPException(status_code=404, detail=f"No channel found with the ID: {channel_id}")
+
+        uploads_playlist_id = response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+
+        videos = []
+        next_page_token = None
+        while True:
+            playlist_items_response = youtube.playlistItems().list(
+                part='snippet',
+                playlistId=uploads_playlist_id,
+                maxResults=50,
+                pageToken=next_page_token
+            ).execute()
+            videos += playlist_items_response['items']
+            next_page_token = playlist_items_response.get('nextPageToken')
+            if not next_page_token:
+                break
+
+        video_urls = []
+        for video in videos:
+            video_id = video['snippet']['resourceId']['videoId']
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            video_title = video['snippet']['title']
+            video_urls.append({'URL': video_url, 'Title': video_title, 'videoId': video_id})
+
+        return {"videos": video_urls}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/channel-transcripts")
+async def get_channel_transcripts_endpoint(channel_id: str):
+    """Get transcripts for all videos in a YouTube channel"""
+    try:
+        request_obj = youtube.channels().list(
+            part='contentDetails',
+            id=channel_id
+        )
+        response = request_obj.execute()
+
+        if 'items' not in response or len(response['items']) == 0:
+            raise HTTPException(status_code=404, detail=f"No channel found with the ID: {channel_id}")
+
+        uploads_playlist_id = response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+
+        videos = []
+        next_page_token = None
+        while True:
+            playlist_items_response = youtube.playlistItems().list(
+                part='snippet',
+                playlistId=uploads_playlist_id,
+                maxResults=50,
+                pageToken=next_page_token
+            ).execute()
+            videos += playlist_items_response['items']
+            next_page_token = playlist_items_response.get('nextPageToken')
+            if not next_page_token:
+                break
+
+        transcripts = []
+        for video in videos:
+            video_id = video['snippet']['resourceId']['videoId']
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            video_title = video['snippet']['title']
+            
+            transcript_text = get_transcript_robust(video_id)
+            if transcript_text:
+                transcripts.append({
+                    'URL': video_url,
+                    'Title': video_title,
+                    'transcript': transcript_text
+                })
+            else:
+                transcripts.append({
+                    'URL': video_url,
+                    'Title': video_title,
+                    'transcript': None,
+                    'error': 'No transcript available for this video'
+                })
+
+        return {"transcripts": transcripts}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/docs-api")
+async def get_api_docs():
+    """Comprehensive API documentation"""
+    docs = {
+        "title": "YouTube API Documentation",
+        "version": "2.0",
+        "base_url": "http://your-server:8001",
+        "endpoints": [
+            {
+                "path": "/",
+                "method": "GET",
+                "description": "API status and info"
+            },
+            {
+                "path": "/health",
+                "method": "GET", 
+                "description": "Health check endpoint"
+            },
+            {
+                "path": "/transcript?video_link={url}",
+                "method": "GET",
+                "description": "Get transcript for a YouTube video with timestamps",
+                "example": "/transcript?video_link=https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+            },
+            {
+                "path": "/simple-search?query={query}&maxResults={num}",
+                "method": "GET",
+                "description": "Search for YouTube videos (simple)",
+                "example": "/simple-search?query=python tutorial&maxResults=10"
+            },
+            {
+                "path": "/search?query={query}&top_n={num}",
+                "method": "GET",
+                "description": "Search videos with filtering (5K+ subscribers, no shorts)",
+                "example": "/search?query=machine learning&top_n=5"
+            },
+            {
+                "path": "/video/{video_id}",
+                "method": "GET",
+                "description": "Get video data with comments and transcript",
+                "example": "/video/dQw4w9WgXcQ"
+            },
+            {
+                "path": "/video-details/{video_id}",
+                "method": "GET",
+                "description": "Get detailed video information",
+                "example": "/video-details/dQw4w9WgXcQ"
+            },
+            {
+                "path": "/video-comments/{video_id}?maxResults={num}",
+                "method": "GET",
+                "description": "Get video comments",
+                "example": "/video-comments/dQw4w9WgXcQ?maxResults=20"
+            },
+            {
+                "path": "/comments/{channel_handle}?top_n={num}",
+                "method": "GET",
+                "description": "Get channel comments from recent videos",
+                "example": "/comments/mkbhd?top_n=5"
+            },
+            {
+                "path": "/transcripts/{channel_handle}?top_n={num}",
+                "method": "GET",
+                "description": "Get channel transcripts from recent videos",
+                "example": "/transcripts/mkbhd?top_n=5"
+            },
+            {
+                "path": "/channel-id?handle={handle}",
+                "method": "GET",
+                "description": "Get channel ID from handle",
+                "example": "/channel-id?handle=mkbhd"
+            },
+            {
+                "path": "/channel-videos?channel_id={id}",
+                "method": "GET",
+                "description": "Get all videos from channel",
+                "example": "/channel-videos?channel_id=UCBJycsmduvYEL83R_U4JriQ"
+            },
+            {
+                "path": "/channel-transcripts?channel_id={id}",
+                "method": "GET",
+                "description": "Get transcripts for all channel videos",
+                "example": "/channel-transcripts?channel_id=UCBJycsmduvYEL83R_U4JriQ"
+            },
+            {
+                "path": "/test-transcript/{video_id}",
+                "method": "GET",
+                "description": "Test transcript functionality",
+                "example": "/test-transcript/dQw4w9WgXcQ"
+            }
+        ],
+        "notes": [
+            "All endpoints return JSON responses",
+            "Proxy configured for IP blocking bypass", 
+            "Multiple transcript methods with fallbacks",
+            "Rate limits apply based on YouTube API quotas"
+        ]
+    }
+    return docs
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001)
