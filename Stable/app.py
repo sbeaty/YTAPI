@@ -4,11 +4,228 @@ from urllib.parse import urlparse, parse_qs
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import requests
+import re
+import json
+from urllib.request import urlopen, Request
+from urllib.error import HTTPError, URLError
+import subprocess
+import tempfile
+import os
 
 app = Flask(__name__)
 
 API_KEY = 'AIzaSyAlN-66eLljiexAKjZhbhKKh8B3_IGhf3c'
 youtube = build('youtube', 'v3', developerKey=API_KEY)
+
+def get_transcript_alternative_1(video_id):
+    """Alternative method 1: Direct timedtext API with user agent"""
+    try:
+        languages = ['en', 'en-US', 'en-GB']
+        for lang in languages:
+            url = f"http://video.google.com/timedtext?lang={lang}&v={video_id}"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            
+            req = Request(url, headers=headers)
+            try:
+                response = urlopen(req, timeout=10)
+                data = response.read().decode('utf-8')
+                
+                if data and '<transcript>' in data:
+                    # Parse XML and extract text with timestamps
+                    import xml.etree.ElementTree as ET
+                    try:
+                        root = ET.fromstring(data)
+                        transcript_text = ''
+                        for text_elem in root.findall('.//text'):
+                            start = text_elem.get('start', '0')
+                            text = text_elem.text or ''
+                            if text.strip():
+                                transcript_text += f'[{start}] {text.strip()}\n'
+                        
+                        if transcript_text.strip():
+                            return transcript_text
+                    except ET.ParseError:
+                        continue
+            except (HTTPError, URLError):
+                continue
+        
+        return None
+    except Exception as e:
+        print(f"Alternative method 1 failed: {e}")
+        return None
+
+def get_transcript_alternative_2(video_id):
+    """Alternative method 2: YouTube transcript API with enhanced error handling"""
+    try:
+        # Try multiple language codes
+        language_codes = ['en', 'en-US', 'en-GB', 'en-CA', 'en-AU']
+        
+        for lang in language_codes:
+            try:
+                transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=[lang])
+                transcript_text = ''
+                for item in transcript_list:
+                    timestamp = item['start']
+                    text = item['text']
+                    transcript_text += f'[{timestamp}] {text}\n'
+                
+                if transcript_text.strip():
+                    return transcript_text
+            except Exception:
+                continue
+        
+        # Try without language specification
+        try:
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+            transcript_text = ''
+            for item in transcript_list:
+                timestamp = item['start']
+                text = item['text']
+                transcript_text += f'[{timestamp}] {text}\n'
+            
+            if transcript_text.strip():
+                return transcript_text
+        except Exception:
+            pass
+        
+        return None
+    except Exception as e:
+        print(f"Alternative method 2 failed: {e}")
+        return None
+
+def get_transcript_alternative_3(video_id):
+    """Alternative method 3: Using requests with session and headers"""
+    try:
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
+        })
+        
+        languages = ['en', 'en-US', 'en-GB']
+        for lang in languages:
+            url = f"https://video.google.com/timedtext?lang={lang}&v={video_id}"
+            
+            try:
+                response = session.get(url, timeout=15)
+                if response.status_code == 200 and response.text:
+                    data = response.text
+                    
+                    if '<transcript>' in data:
+                        import xml.etree.ElementTree as ET
+                        try:
+                            root = ET.fromstring(data)
+                            transcript_text = ''
+                            for text_elem in root.findall('.//text'):
+                                start = text_elem.get('start', '0')
+                                text = text_elem.text or ''
+                                if text.strip():
+                                    transcript_text += f'[{start}] {text.strip()}\n'
+                            
+                            if transcript_text.strip():
+                                return transcript_text
+                        except ET.ParseError:
+                            continue
+            except requests.RequestException:
+                continue
+        
+        return None
+    except Exception as e:
+        print(f"Alternative method 3 failed: {e}")
+        return None
+
+def get_transcript_alternative_4(video_id):
+    """Alternative method 4: Using yt-dlp for subtitle extraction"""
+    try:
+        # Check if yt-dlp is available
+        result = subprocess.run(['which', 'yt-dlp'], capture_output=True, text=True)
+        if result.returncode != 0:
+            print("yt-dlp not available, skipping this method")
+            return None
+        
+        video_url = f"https://www.youtube.com/watch?v={video_id}"
+        
+        # Try to get auto-generated subtitles first, then manual ones
+        for subtitle_type in ['--write-auto-sub', '--write-sub']:
+            try:
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    cmd = [
+                        'yt-dlp',
+                        subtitle_type,
+                        '--sub-lang', 'en',
+                        '--sub-format', 'srv1',
+                        '--skip-download',
+                        '--output', f'{temp_dir}/%(title)s.%(ext)s',
+                        video_url
+                    ]
+                    
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                    
+                    if result.returncode == 0:
+                        # Look for subtitle files
+                        for file in os.listdir(temp_dir):
+                            if file.endswith('.srv1'):
+                                subtitle_path = os.path.join(temp_dir, file)
+                                with open(subtitle_path, 'r', encoding='utf-8') as f:
+                                    content = f.read()
+                                
+                                # Parse srv1 format and extract text with timestamps
+                                import xml.etree.ElementTree as ET
+                                try:
+                                    root = ET.fromstring(content)
+                                    transcript_text = ''
+                                    for p_elem in root.findall('.//p'):
+                                        start = p_elem.get('t', '0')
+                                        # Convert milliseconds to seconds
+                                        start_seconds = float(start) / 1000 if start else 0
+                                        text = p_elem.text or ''
+                                        if text.strip():
+                                            transcript_text += f'[{start_seconds}] {text.strip()}\n'
+                                    
+                                    if transcript_text.strip():
+                                        return transcript_text
+                                except ET.ParseError:
+                                    continue
+            except subprocess.TimeoutExpired:
+                print("yt-dlp timeout")
+                continue
+            except Exception as e:
+                print(f"yt-dlp error: {e}")
+                continue
+        
+        return None
+    except Exception as e:
+        print(f"Alternative method 4 failed: {e}")
+        return None
+
+def get_transcript_robust(video_id):
+    """Robust transcript fetching with multiple fallback methods"""
+    methods = [
+        ("YouTube Transcript API", get_transcript_alternative_2),
+        ("Direct timedtext API", get_transcript_alternative_1),
+        ("Requests with session", get_transcript_alternative_3),
+        ("yt-dlp extraction", get_transcript_alternative_4)
+    ]
+    
+    for method_name, method_func in methods:
+        try:
+            print(f"Trying {method_name} for video {video_id}")
+            result = method_func(video_id)
+            if result and result.strip():
+                print(f"✅ {method_name} succeeded for video {video_id}")
+                return result
+            else:
+                print(f"❌ {method_name} returned empty result for video {video_id}")
+        except Exception as e:
+            print(f"❌ {method_name} failed for video {video_id}: {e}")
+    
+    print(f"❌ All transcript methods failed for video {video_id}")
+    return None
 
 @app.route('/transcript', methods=['GET'])
 def get_transcript():
@@ -27,15 +244,12 @@ def get_transcript():
         return jsonify({'error': 'Invalid YouTube video link.'}), 400
 
     try:
-        # Fetch the transcript using the video ID
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-        # Format transcript with timestamps
-        transcript_text = ''
-        for item in transcript_list:
-            timestamp = item['start']
-            text = item['text']
-            transcript_text += f'[{timestamp}] {text}\n'
-        return jsonify({'transcript': transcript_text}), 200
+        # Use robust transcript fetching with multiple fallback methods
+        transcript_text = get_transcript_robust(video_id)
+        if transcript_text:
+            return jsonify({'transcript': transcript_text}), 200
+        else:
+            return jsonify({'error': 'No transcript available for this video. The video may not have captions enabled or may be restricted.'}), 404
     except Exception as e:
         return jsonify({'error': f'Error fetching transcript: {str(e)}'}), 500
 
@@ -236,25 +450,19 @@ def get_channel_transcripts():
             video_url = f"https://www.youtube.com/watch?v={video_id}"
             video_title = video['snippet']['title']
             
-            try:
-                transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-                transcript_text = ''
-                for item in transcript_list:
-                    timestamp = item['start']
-                    text = item['text']
-                    transcript_text += f'[{timestamp}] {text}\n'
-                
+            transcript_text = get_transcript_robust(video_id)
+            if transcript_text:
                 transcripts.append({
                     'URL': video_url,
                     'Title': video_title,
                     'transcript': transcript_text
                 })
-            except Exception as e:
+            else:
                 transcripts.append({
                     'URL': video_url,
                     'Title': video_title,
                     'transcript': None,
-                    'error': f'Error fetching transcript: {str(e)}'
+                    'error': 'No transcript available for this video'
                 })
 
         return jsonify({'transcripts': transcripts}), 200
