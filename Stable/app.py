@@ -79,27 +79,29 @@ def get_transcript_alternative_1(video_id):
         return None
 
 def get_transcript_alternative_2(video_id):
-    """Alternative method 2: YouTube transcript API with proxy support"""
+    """Alternative method 2: YouTube transcript API with correct proxy implementation"""
     try:
-        # Configure proxy for youtube-transcript-api
-        from youtube_transcript_api.proxies import proxies_list
+        # Import the correct proxy configuration classes
+        from youtube_transcript_api.proxies import GenericProxyConfig
+        from youtube_transcript_api import YouTubeTranscriptApi
+        
+        # Create proxy configuration using the correct format
+        proxy_config = GenericProxyConfig(
+            proxies={
+                'http': PROXY_URL,
+                'https': PROXY_URL
+            }
+        )
+        
+        # Create API instance with proxy
+        ytt_api = YouTubeTranscriptApi(proxy_config=proxy_config)
         
         # Try multiple language codes
         language_codes = ['en', 'en-US', 'en-GB', 'en-CA', 'en-AU']
         
         for lang in language_codes:
             try:
-                # Try with proxy configuration if available
-                proxy_config = {
-                    'http': PROXY_URL,
-                    'https': PROXY_URL
-                }
-                
-                transcript_list = YouTubeTranscriptApi.get_transcript(
-                    video_id, 
-                    languages=[lang],
-                    proxies=proxy_config
-                )
+                transcript_list = ytt_api.get_transcript(video_id, languages=[lang])
                 transcript_text = ''
                 for item in transcript_list:
                     timestamp = item['start']
@@ -114,10 +116,7 @@ def get_transcript_alternative_2(video_id):
         
         # Try without language specification but with proxy
         try:
-            transcript_list = YouTubeTranscriptApi.get_transcript(
-                video_id,
-                proxies={'http': PROXY_URL, 'https': PROXY_URL}
-            )
+            transcript_list = ytt_api.get_transcript(video_id)
             transcript_text = ''
             for item in transcript_list:
                 timestamp = item['start']

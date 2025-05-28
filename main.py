@@ -33,6 +33,21 @@ app = FastAPI(
 api_key = 'AIzaSyAlN-66eLljiexAKjZhbhKKh8B3_IGhf3c'
 youtube = build('youtube', 'v3', developerKey=api_key)
 
+# Proxy configuration
+PROXY_CONFIG = {
+    'host': 'gw.dataimpulse.com',
+    'port': '823',
+    'username': 'f3138bb7d6946fd998eb',
+    'password': '9a590d5c36b57e6f'
+}
+
+# Proxy URL for requests
+PROXY_URL = f"http://{PROXY_CONFIG['username']}:{PROXY_CONFIG['password']}@{PROXY_CONFIG['host']}:{PROXY_CONFIG['port']}"
+PROXIES = {
+    'http': PROXY_URL,
+    'https': PROXY_URL
+}
+
 def get_channel_id(handle: str) -> Optional[str]:
     """Get channel ID from channel handle"""
     url = f'https://www.googleapis.com/youtube/v3/channels?part=id&forHandle={handle}&key={api_key}'
@@ -149,39 +164,105 @@ def get_video_comments(video_id: str, max_comments: int = 100) -> list:
         
     return comments
 
+def get_transcript_robust(video_id):
+    """Robust transcript fetching with multiple fallback methods and proxy support"""
+    try:
+        # Method 1: YouTube Transcript API with proxy
+        from youtube_transcript_api.proxies import GenericProxyConfig
+        
+        proxy_config = GenericProxyConfig(
+            proxies={
+                'http': PROXY_URL,
+                'https': PROXY_URL
+            }
+        )
+        
+        ytt_api = YouTubeTranscriptApi(proxy_config=proxy_config)
+        
+        # Try multiple language codes
+        language_codes = ['en', 'en-US', 'en-GB', 'en-CA', 'en-AU']
+        
+        for lang in language_codes:
+            try:
+                transcript_list = ytt_api.get_transcript(video_id, languages=[lang])
+                transcript_text = ''
+                for item in transcript_list:
+                    timestamp = item['start']
+                    text = item['text']
+                    transcript_text += f'[{timestamp}] {text}\n'
+                
+                if transcript_text.strip():
+                    print(f"✅ YouTube Transcript API succeeded for video {video_id}")
+                    return transcript_text
+            except Exception as e:
+                print(f"Transcript API failed for language {lang}: {e}")
+                continue
+        
+        # Method 2: Direct timedtext API with proxy
+        languages = ['en', 'en-US', 'en-GB']
+        for lang in languages:
+            url = f"https://video.google.com/timedtext?lang={lang}&v={video_id}"
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/png,*/*;q=0.5',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive'
+            }
+            
+            try:
+                response = requests.get(url, headers=headers, proxies=PROXIES, timeout=15)
+                if response.status_code == 200 and response.text:
+                    data = response.text
+                    
+                    if '<transcript>' in data or '<text' in data:
+                        import xml.etree.ElementTree as ET
+                        try:
+                            root = ET.fromstring(data)
+                            transcript_text = ''
+                            for text_elem in root.findall('.//text'):
+                                start = text_elem.get('start', '0')
+                                text = text_elem.text or ''
+                                if text.strip():
+                                    transcript_text += f'[{start}] {text.strip()}\n'
+                            
+                            if transcript_text.strip():
+                                print(f"✅ Direct timedtext API succeeded for video {video_id}")
+                                return transcript_text
+                        except ET.ParseError:
+                            continue
+            except requests.RequestException as e:
+                print(f"Direct API request failed for {url}: {e}")
+                continue
+        
+        print(f"❌ All transcript methods failed for video {video_id}")
+        return None
+        
+    except Exception as e:
+        print(f'Error fetching transcript for video {video_id}: {str(e)}')
+        return None
+
 def get_transcript(video_link):
-    """Exact replica of working notebook function"""
+    """Wrapper function to maintain compatibility"""
     video_id = video_link.split('v=')[1]
     # Handle potential URL parameters after video ID
     if '&' in video_id:
         video_id = video_id.split('&')[0]
     
     print(f"📞 Extracted video_id: {video_id} from {video_link}")
-    
-    try:
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-        transcript_text = ''
-        for item in transcript_list:
-            timestamp = item['start']
-            text = item['text']
-            transcript_text += f'[{timestamp}] {text}\n'
-        return transcript_text
-    except Exception as e:
-        print(f'Error fetching transcript for video {video_link}: {str(e)}')
-        return None
+    return get_transcript_robust(video_id)
 
 def get_video_transcript(video_id: str) -> Optional[str]:
-    """Wrapper for get_transcript to work with video_id"""
+    """Enhanced transcript fetching with proxy support"""
     if not TRANSCRIPT_API_AVAILABLE:
         print(f"❌ YouTube Transcript API not available for video {video_id}")
         return None
     
-    # Convert video_id to full URL format expected by notebook function
-    video_link = f"https://www.youtube.com/watch?v={video_id}"
-    print(f"🔍 Using notebook function for: {video_link}")
+    print(f"🔍 Fetching transcript for video: {video_id}")
     
-    # Use the exact notebook function
-    return get_transcript(video_link)
+    # Use the robust transcript function with proxy support
+    return get_transcript_robust(video_id)
 
 def filter_out_shorts(video_ids: list) -> list:
     """Filter out YouTube Shorts (videos <= 60 seconds) from a list of video IDs"""
