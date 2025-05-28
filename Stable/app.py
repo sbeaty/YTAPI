@@ -266,5 +266,101 @@ def get_channel_transcripts():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/docs', methods=['GET'])
+def get_docs():
+    docs = {
+        "title": "YouTube API Documentation",
+        "version": "1.0",
+        "endpoints": [
+            {
+                "path": "/transcript",
+                "method": "GET",
+                "description": "Get transcript for a YouTube video with timestamps",
+                "parameters": [
+                    {"name": "video_link", "type": "string", "required": True, "description": "YouTube video URL"}
+                ],
+                "example": "/transcript?video_link=https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "response": {"transcript": "[1.36] [♪♪♪]\\n[18.64] ♪ We're no strangers to love ♪\\n..."}
+            },
+            {
+                "path": "/search",
+                "method": "GET", 
+                "description": "Search for YouTube videos",
+                "parameters": [
+                    {"name": "query", "type": "string", "required": True, "description": "Search query"},
+                    {"name": "maxResults", "type": "integer", "required": False, "description": "Maximum number of results (default: 5)"}
+                ],
+                "example": "/search?query=python tutorial&maxResults=10",
+                "response": {"results": [{"title": "Video Title", "videoId": "abc123"}]}
+            },
+            {
+                "path": "/video_details",
+                "method": "GET",
+                "description": "Get detailed information about a YouTube video",
+                "parameters": [
+                    {"name": "videoId", "type": "string", "required": True, "description": "YouTube video ID"}
+                ],
+                "example": "/video_details?videoId=dQw4w9WgXcQ",
+                "response": {"details": {"title": "Video Title", "description": "...", "viewCount": "123456"}}
+            },
+            {
+                "path": "/comments",
+                "method": "GET",
+                "description": "Get comments for a YouTube video",
+                "parameters": [
+                    {"name": "videoId", "type": "string", "required": True, "description": "YouTube video ID"},
+                    {"name": "maxResults", "type": "integer", "required": False, "description": "Maximum number of comments (default: 5)"}
+                ],
+                "example": "/comments?videoId=dQw4w9WgXcQ&maxResults=20",
+                "response": {"comments": [{"author": "User", "text": "Great video!", "likeCount": 5}]}
+            },
+            {
+                "path": "/channel_id",
+                "method": "GET",
+                "description": "Get channel ID from channel handle",
+                "parameters": [
+                    {"name": "handle", "type": "string", "required": True, "description": "YouTube channel handle (without @)"}
+                ],
+                "example": "/channel_id?handle=TheRandallCarlson",
+                "response": {"channel_id": "UCAPciy143ZBXBrFpCVPnWDg"}
+            },
+            {
+                "path": "/channel_videos",
+                "method": "GET",
+                "description": "Get all videos from a YouTube channel",
+                "parameters": [
+                    {"name": "channel_id", "type": "string", "required": True, "description": "YouTube channel ID"}
+                ],
+                "example": "/channel_videos?channel_id=UCAPciy143ZBXBrFpCVPnWDg",
+                "response": {"videos": [{"URL": "https://www.youtube.com/watch?v=abc123", "Title": "Video Title"}]}
+            },
+            {
+                "path": "/channel_transcripts",
+                "method": "GET",
+                "description": "Get transcripts for all videos in a YouTube channel",
+                "parameters": [
+                    {"name": "channel_id", "type": "string", "required": True, "description": "YouTube channel ID"}
+                ],
+                "example": "/channel_transcripts?channel_id=UCAPciy143ZBXBrFpCVPnWDg",
+                "response": {"transcripts": [{"URL": "...", "Title": "...", "transcript": "[1.36] Hello world..."}]}
+            },
+            {
+                "path": "/docs",
+                "method": "GET",
+                "description": "This documentation endpoint",
+                "parameters": [],
+                "example": "/docs",
+                "response": {"title": "YouTube API Documentation", "endpoints": [...]}
+            }
+        ],
+        "notes": [
+            "All endpoints return JSON responses",
+            "Error responses include an 'error' field with description",
+            "Transcript endpoints may return null for videos without captions",
+            "Rate limits apply based on YouTube API quotas"
+        ]
+    }
+    return jsonify(docs), 200
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=8001)
