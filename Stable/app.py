@@ -2,8 +2,13 @@ from flask import Flask, request, jsonify
 from youtube_transcript_api import YouTubeTranscriptApi
 from urllib.parse import urlparse, parse_qs
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+import requests
 
 app = Flask(__name__)
+
+API_KEY = 'AIzaSyAlN-66eLljiexAKjZhbhKKh8B3_IGhf3c'
+youtube = build('youtube', 'v3', developerKey=API_KEY)
 
 @app.route('/transcript', methods=['GET'])
 def get_transcript():
@@ -24,11 +29,15 @@ def get_transcript():
     try:
         # Fetch the transcript using the video ID
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-        # Concatenate all text items in the transcript into a single string
-        transcript_text = " ".join([item['text'] for item in transcript_list])
+        # Format transcript with timestamps
+        transcript_text = ''
+        for item in transcript_list:
+            timestamp = item['start']
+            text = item['text']
+            transcript_text += f'[{timestamp}] {text}\n'
         return jsonify({'transcript': transcript_text}), 200
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Error fetching transcript: {str(e)}'}), 500
 
 @app.route('/search', methods=['GET'])
 def search_videos():
@@ -38,9 +47,6 @@ def search_videos():
         return jsonify({'error': 'Query parameter is missing.'}), 400
 
     try:
-        api_key = 'AIzaSyAlN-66eLljiexAKjZhbhKKh8B3_IGhf3c'
-        youtube = build('youtube', 'v3', developerKey=api_key)
-        
         youtube_request = youtube.search().list(
             part="snippet",
             q=search_query,
@@ -67,9 +73,6 @@ def video_details():
         return jsonify({'error': 'Video ID parameter is missing.'}), 400
 
     try:
-        api_key = 'AIzaSyAlN-66eLljiexAKjZhbhKKh8B3_IGhf3c'
-        youtube = build('youtube', 'v3', developerKey=api_key)
-        
         youtube_request = youtube.videos().list(
             part="snippet,contentDetails,statistics",
             id=video_id
@@ -104,9 +107,6 @@ def get_comments():
         return jsonify({'error': 'Video ID parameter is missing.'}), 400
 
     try:
-        api_key = 'AIzaSyAlN-66eLljiexAKjZhbhKKh8B3_IGhf3c'
-        youtube = build('youtube', 'v3', developerKey=api_key)
-        
         youtube_request = youtube.commentThreads().list(
             part="snippet",
             videoId=video_id,
@@ -126,6 +126,143 @@ def get_comments():
             })
         
         return jsonify({'comments': comments}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/channel_id', methods=['GET'])
+def get_channel_id():
+    handle = request.args.get('handle')
+    if not handle:
+        return jsonify({'error': 'Handle parameter is missing.'}), 400
+    
+    try:
+        url = f'https://www.googleapis.com/youtube/v3/channels?part=id&forHandle={handle}&key={API_KEY}'
+        response = requests.get(url)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if 'items' in data and len(data['items']) > 0:
+                return jsonify({'channel_id': data['items'][0]['id']}), 200
+            else:
+                return jsonify({'error': f"No channel found with the handle: {handle}"}), 404
+        else:
+            return jsonify({'error': f"Error retrieving channel ID. Status code: {response.status_code}"}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/channel_videos', methods=['GET'])
+def get_channel_videos():
+    channel_id = request.args.get('channel_id')
+    if not channel_id:
+        return jsonify({'error': 'Channel ID parameter is missing.'}), 400
+
+    try:
+        request_obj = youtube.channels().list(
+            part='contentDetails',
+            id=channel_id
+        )
+        response = request_obj.execute()
+
+        if 'items' not in response or len(response['items']) == 0:
+            return jsonify({'error': f"No channel found with the ID: {channel_id}"}), 404
+
+        uploads_playlist_id = response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+
+        videos = []
+        next_page_token = None
+        while True:
+            playlist_items_response = youtube.playlistItems().list(
+                part='snippet',
+                playlistId=uploads_playlist_id,
+                maxResults=50,
+                pageToken=next_page_token
+            ).execute()
+            videos += playlist_items_response['items']
+            next_page_token = playlist_items_response.get('nextPageToken')
+            if not next_page_token:
+                break
+
+        video_urls = []
+        for video in videos:
+            video_id = video['snippet']['resourceId']['videoId']
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            video_title = video['snippet']['title']
+            video_urls.append({'URL': video_url, 'Title': video_title})
+
+        return jsonify({'videos': video_urls}), 200
+
+    except HttpError as e:
+        return jsonify({'error': f"An HTTP error occurred: {e}"}), 500
+    except KeyError as e:
+        return jsonify({'error': f"Unexpected response structure: {e}"}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/channel_transcripts', methods=['GET'])
+def get_channel_transcripts():
+    channel_id = request.args.get('channel_id')
+    if not channel_id:
+        return jsonify({'error': 'Channel ID parameter is missing.'}), 400
+
+    try:
+        request_obj = youtube.channels().list(
+            part='contentDetails',
+            id=channel_id
+        )
+        response = request_obj.execute()
+
+        if 'items' not in response or len(response['items']) == 0:
+            return jsonify({'error': f"No channel found with the ID: {channel_id}"}), 404
+
+        uploads_playlist_id = response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+
+        videos = []
+        next_page_token = None
+        while True:
+            playlist_items_response = youtube.playlistItems().list(
+                part='snippet',
+                playlistId=uploads_playlist_id,
+                maxResults=50,
+                pageToken=next_page_token
+            ).execute()
+            videos += playlist_items_response['items']
+            next_page_token = playlist_items_response.get('nextPageToken')
+            if not next_page_token:
+                break
+
+        transcripts = []
+        for video in videos:
+            video_id = video['snippet']['resourceId']['videoId']
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            video_title = video['snippet']['title']
+            
+            try:
+                transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+                transcript_text = ''
+                for item in transcript_list:
+                    timestamp = item['start']
+                    text = item['text']
+                    transcript_text += f'[{timestamp}] {text}\n'
+                
+                transcripts.append({
+                    'URL': video_url,
+                    'Title': video_title,
+                    'transcript': transcript_text
+                })
+            except Exception as e:
+                transcripts.append({
+                    'URL': video_url,
+                    'Title': video_title,
+                    'transcript': None,
+                    'error': f'Error fetching transcript: {str(e)}'
+                })
+
+        return jsonify({'transcripts': transcripts}), 200
+
+    except HttpError as e:
+        return jsonify({'error': f"An HTTP error occurred: {e}"}), 500
+    except KeyError as e:
+        return jsonify({'error': f"Unexpected response structure: {e}"}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

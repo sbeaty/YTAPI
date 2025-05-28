@@ -149,32 +149,39 @@ def get_video_comments(video_id: str, max_comments: int = 100) -> list:
         
     return comments
 
-def get_video_transcript(video_id: str) -> Optional[str]:
-    """Get transcript from a specific video - simplified working version"""
-    if not TRANSCRIPT_API_AVAILABLE:
-        print(f"❌ YouTube Transcript API not available for video {video_id}")
-        return None
+def get_transcript(video_link):
+    """Exact replica of working notebook function"""
+    video_id = video_link.split('v=')[1]
+    # Handle potential URL parameters after video ID
+    if '&' in video_id:
+        video_id = video_id.split('&')[0]
     
-    print(f"🔍 Attempting to fetch transcript for video {video_id}")
+    print(f"📞 Extracted video_id: {video_id} from {video_link}")
     
     try:
-        # Use the simple approach that works in the notebook
-        print(f"📞 Calling YouTubeTranscriptApi.get_transcript({video_id})")
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-        print(f"✅ Got transcript with {len(transcript_list)} entries")
-        
         transcript_text = ''
         for item in transcript_list:
             timestamp = item['start']
             text = item['text']
             transcript_text += f'[{timestamp}] {text}\n'
-        
-        print(f"📝 Built transcript text: {len(transcript_text)} characters")
         return transcript_text
     except Exception as e:
-        print(f'❌ Error fetching transcript for video {video_id}: {str(e)}')
-        print(f'❌ Exception type: {type(e).__name__}')
+        print(f'Error fetching transcript for video {video_link}: {str(e)}')
         return None
+
+def get_video_transcript(video_id: str) -> Optional[str]:
+    """Wrapper for get_transcript to work with video_id"""
+    if not TRANSCRIPT_API_AVAILABLE:
+        print(f"❌ YouTube Transcript API not available for video {video_id}")
+        return None
+    
+    # Convert video_id to full URL format expected by notebook function
+    video_link = f"https://www.youtube.com/watch?v={video_id}"
+    print(f"🔍 Using notebook function for: {video_link}")
+    
+    # Use the exact notebook function
+    return get_transcript(video_link)
 
 def filter_out_shorts(video_ids: list) -> list:
     """Filter out YouTube Shorts (videos <= 60 seconds) from a list of video IDs"""
