@@ -292,59 +292,433 @@ async def get_channel_videos(channel_id: str = Query(..., description="YouTube c
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/channel-transcripts")
+async def get_channel_transcripts(channel_id: str = Query(..., description="YouTube channel ID")):
+    """Get transcripts for all videos in a YouTube channel using working proxy method"""
+    try:
+        # Get channel uploads playlist
+        channel_response = youtube.channels().list(
+            part='contentDetails',
+            id=channel_id
+        ).execute()
+
+        if 'items' not in channel_response or len(channel_response['items']) == 0:
+            raise HTTPException(status_code=404, detail=f"No channel found with ID: {channel_id}")
+
+        uploads_playlist_id = channel_response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+
+        # Get all videos from uploads playlist
+        videos = []
+        next_page_token = None
+        
+        while True:
+            playlist_response = youtube.playlistItems().list(
+                part='snippet',
+                playlistId=uploads_playlist_id,
+                maxResults=50,
+                pageToken=next_page_token
+            ).execute()
+            
+            videos.extend(playlist_response['items'])
+            next_page_token = playlist_response.get('nextPageToken')
+            
+            if not next_page_token:
+                break
+
+        # Get transcripts for each video using working proxy method
+        transcripts = []
+        for video in videos:
+            video_id = video['snippet']['resourceId']['videoId']
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            video_title = video['snippet']['title']
+            
+            try:
+                # Use the working proxy method
+                transcript_list = YouTubeTranscriptApi.get_transcript(video_id, proxies=PROXIES)
+                transcript_text = ""
+                for item in transcript_list:
+                    timestamp = item['start']
+                    text = item['text']
+                    transcript_text += f'[{timestamp}] {text}\n'
+                
+                transcripts.append({
+                    'videoId': video_id,
+                    'url': video_url,
+                    'title': video_title,
+                    'transcript': transcript_text,
+                    'publishedAt': video['snippet']['publishedAt']
+                })
+            except Exception as e:
+                transcripts.append({
+                    'videoId': video_id,
+                    'url': video_url,
+                    'title': video_title,
+                    'transcript': None,
+                    'error': f'No transcript available: {str(e)}',
+                    'publishedAt': video['snippet']['publishedAt']
+                })
+
+        return {"transcripts": transcripts, "total_count": len(transcripts)}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/transcripts/{channel_handle}")
+async def get_channel_transcripts_by_handle(
+    channel_handle: str,
+    top_n: int = Query(default=5, ge=1, le=50, description="Number of most recent videos to process")
+):
+    """Get transcripts from the top N most recent videos of a channel by handle"""
+    try:
+        # First get channel ID from handle
+        import requests
+        url = f'https://www.googleapis.com/youtube/v3/channels?part=id&forHandle={channel_handle}&key={API_KEY}'
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"Error retrieving channel ID. Status: {response.status_code}")
+        
+        data = response.json()
+        if 'items' not in data or len(data['items']) == 0:
+            raise HTTPException(status_code=404, detail=f"No channel found with handle: {channel_handle}")
+        
+        channel_id = data['items'][0]['id']
+        
+        # Get recent videos (limited to top_n)
+        channel_response = youtube.channels().list(
+            part='contentDetails',
+            id=channel_id
+        ).execute()
+
+        uploads_playlist_id = channel_response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+
+        # Get only the most recent videos
+        playlist_response = youtube.playlistItems().list(
+            part='snippet',
+            playlistId=uploads_playlist_id,
+            maxResults=top_n
+        ).execute()
+        
+        videos = playlist_response['items']
+
+        # Get transcripts for each video
+        transcripts = []
+        for video in videos:
+            video_id = video['snippet']['resourceId']['videoId']
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            video_title = video['snippet']['title']
+            
+            try:
+                transcript_list = YouTubeTranscriptApi.get_transcript(video_id, proxies=PROXIES)
+                transcript_text = ""
+                for item in transcript_list:
+                    timestamp = item['start']
+                    text = item['text']
+                    transcript_text += f'[{timestamp}] {text}\n'
+                
+                transcripts.append({
+                    'videoId': video_id,
+                    'url': video_url,
+                    'title': video_title,
+                    'transcript': transcript_text,
+                    'has_transcript': True,
+                    'publishedAt': video['snippet']['publishedAt']
+                })
+            except Exception as e:
+                transcripts.append({
+                    'videoId': video_id,
+                    'url': video_url,
+                    'title': video_title,
+                    'transcript': None,
+                    'has_transcript': False,
+                    'error': f'No transcript available: {str(e)}',
+                    'publishedAt': video['snippet']['publishedAt']
+                })
+
+        videos_with_transcripts = len([t for t in transcripts if t.get('has_transcript')])
+
+        return {
+            "channel_handle": channel_handle,
+            "channel_id": channel_id,
+            "videos_processed": len(transcripts),
+            "videos_with_transcripts": videos_with_transcripts,
+            "transcripts": transcripts
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/comments/{channel_handle}")
+async def get_channel_comments_by_handle(
+    channel_handle: str,
+    top_n: int = Query(default=5, ge=1, le=50, description="Number of most recent videos to process"),
+    max_comments_per_video: int = Query(default=100, ge=1, le=1000, description="Maximum comments per video")
+):
+    """Get comments from the top N most recent videos of a channel"""
+    try:
+        # Get channel ID from handle
+        import requests
+        url = f'https://www.googleapis.com/youtube/v3/channels?part=id&forHandle={channel_handle}&key={API_KEY}'
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"Error retrieving channel ID. Status: {response.status_code}")
+        
+        data = response.json()
+        if 'items' not in data or len(data['items']) == 0:
+            raise HTTPException(status_code=404, detail=f"No channel found with handle: {channel_handle}")
+        
+        channel_id = data['items'][0]['id']
+        
+        # Get recent videos (limited to top_n)
+        channel_response = youtube.channels().list(
+            part='contentDetails',
+            id=channel_id
+        ).execute()
+
+        uploads_playlist_id = channel_response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+
+        playlist_response = youtube.playlistItems().list(
+            part='snippet',
+            playlistId=uploads_playlist_id,
+            maxResults=top_n
+        ).execute()
+        
+        videos = playlist_response['items']
+
+        # Get comments for each video
+        result = {
+            "channel_handle": channel_handle,
+            "channel_id": channel_id,
+            "videos_processed": len(videos),
+            "videos": {}
+        }
+        
+        total_comments = 0
+        for video in videos:
+            video_id = video['snippet']['resourceId']['videoId']
+            video_title = video['snippet']['title']
+            
+            try:
+                comments_response = youtube.commentThreads().list(
+                    part="snippet",
+                    videoId=video_id,
+                    maxResults=max_comments_per_video,
+                    textFormat="plainText"
+                ).execute()
+                
+                comments = []
+                for item in comments_response.get('items', []):
+                    comment_data = item['snippet']['topLevelComment']['snippet']
+                    comments.append({
+                        'author': comment_data['authorDisplayName'],
+                        'text': comment_data['textDisplay'],
+                        'publishedAt': comment_data['publishedAt'],
+                        'likeCount': comment_data['likeCount']
+                    })
+                
+                result["videos"][video_id] = {
+                    "video_info": {
+                        'id': video_id,
+                        'title': video_title,
+                        'url': f"https://www.youtube.com/watch?v={video_id}",
+                        'publishedAt': video['snippet']['publishedAt']
+                    },
+                    "comments": comments,
+                    "comment_count": len(comments)
+                }
+                total_comments += len(comments)
+                
+            except Exception as e:
+                result["videos"][video_id] = {
+                    "video_info": {
+                        'id': video_id,
+                        'title': video_title,
+                        'url': f"https://www.youtube.com/watch?v={video_id}",
+                        'publishedAt': video['snippet']['publishedAt']
+                    },
+                    "comments": [],
+                    "comment_count": 0,
+                    "error": f"Error fetching comments: {str(e)}"
+                }
+        
+        result["total_comments"] = total_comments
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/test-transcript/{video_id}")
+async def test_transcript(video_id: str):
+    """Test transcript functionality for debugging"""
+    result = {
+        "video_id": video_id,
+        "proxy_configured": True,
+        "transcript": None,
+        "has_transcript": False,
+        "error": None,
+        "transcript_length": 0
+    }
+    
+    try:
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, proxies=PROXIES)
+        transcript_text = ""
+        for item in transcript_list:
+            timestamp = item['start']
+            text = item['text']
+            transcript_text += f'[{timestamp}] {text}\n'
+        
+        result["transcript"] = transcript_text
+        result["has_transcript"] = True
+        result["transcript_length"] = len(transcript_text)
+        
+    except Exception as e:
+        result["error"] = str(e)
+    
+    return result
+
+@app.get("/transcript-from-url")
+async def get_transcript_from_url(video_link: str = Query(..., description="Full YouTube video URL")):
+    """Get transcript using video URL instead of just video ID"""
+    try:
+        video_id = extract_video_id(video_link)
+        if not video_id:
+            raise HTTPException(status_code=400, detail="Invalid YouTube video URL")
+        
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, proxies=PROXIES)
+        transcript_text = ""
+        for item in transcript_list:
+            timestamp = item['start']
+            text = item['text']
+            transcript_text += f'[{timestamp}] {text}\n'
+        
+        return {
+            "video_url": video_link,
+            "video_id": video_id,
+            "transcript": transcript_text
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/docs-api")
 async def get_api_docs():
-    """API Documentation"""
+    """Comprehensive API Documentation with all endpoints"""
     return {
         "title": "YouTube API Documentation",
-        "version": "2.0.0",
-        "base_url": "http://your-server:8001",
+        "version": "2.0.1", 
+        "base_url": "http://45.33.70.141:8001",
         "endpoints": [
             {
+                "path": "/",
+                "method": "GET",
+                "description": "API status and version info",
+                "example": "/"
+            },
+            {
+                "path": "/health",
+                "method": "GET",
+                "description": "Health check with proxy status",
+                "example": "/health"
+            },
+            {
                 "path": "/transcript?videoId={id}",
+                "method": "GET",
                 "description": "Get video transcript (plain text)",
                 "example": "/transcript?videoId=dQw4w9WgXcQ"
             },
             {
                 "path": "/transcript-with-timestamps?videoId={id}",
+                "method": "GET",
                 "description": "Get video transcript with timestamps",
                 "example": "/transcript-with-timestamps?videoId=dQw4w9WgXcQ"
             },
             {
+                "path": "/transcript-from-url?video_link={url}",
+                "method": "GET",
+                "description": "Get transcript using full YouTube URL",
+                "example": "/transcript-from-url?video_link=https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+            },
+            {
+                "path": "/test-transcript/{video_id}",
+                "method": "GET",
+                "description": "Test transcript functionality for debugging",
+                "example": "/test-transcript/dQw4w9WgXcQ"
+            },
+            {
                 "path": "/search?query={query}&maxResults={num}",
+                "method": "GET",
                 "description": "Search YouTube videos",
                 "example": "/search?query=python tutorial&maxResults=10"
             },
             {
                 "path": "/video_details?videoId={id}",
+                "method": "GET",
                 "description": "Get video details and statistics",
                 "example": "/video_details?videoId=dQw4w9WgXcQ"
             },
             {
                 "path": "/comments?videoId={id}&maxResults={num}",
+                "method": "GET",
                 "description": "Get video comments",
                 "example": "/comments?videoId=dQw4w9WgXcQ&maxResults=100"
             },
             {
                 "path": "/video/{video_id}",
+                "method": "GET",
                 "description": "Get complete video data (details + comments + transcript)",
                 "example": "/video/dQw4w9WgXcQ"
             },
             {
                 "path": "/channel-id?handle={handle}",
+                "method": "GET",
                 "description": "Get channel ID from handle",
                 "example": "/channel-id?handle=mkbhd"
             },
             {
                 "path": "/channel-videos?channel_id={id}",
+                "method": "GET",
                 "description": "Get all videos from channel",
                 "example": "/channel-videos?channel_id=UCBJycsmduvYEL83R_U4JriQ"
+            },
+            {
+                "path": "/channel-transcripts?channel_id={id}",
+                "method": "GET",
+                "description": "Get transcripts for ALL videos in channel",
+                "example": "/channel-transcripts?channel_id=UCBJycsmduvYEL83R_U4JriQ"
+            },
+            {
+                "path": "/transcripts/{channel_handle}?top_n={num}",
+                "method": "GET",
+                "description": "Get transcripts from top N recent videos of channel",
+                "example": "/transcripts/mkbhd?top_n=5"
+            },
+            {
+                "path": "/comments/{channel_handle}?top_n={num}&max_comments_per_video={num}",
+                "method": "GET",
+                "description": "Get comments from top N recent videos of channel",
+                "example": "/comments/mkbhd?top_n=5&max_comments_per_video=50"
             }
         ],
+        "testing_examples": [
+            "GET /transcript?videoId=dQw4w9WgXcQ",
+            "GET /search?query=tutorial&maxResults=5", 
+            "GET /video_details?videoId=dQw4w9WgXcQ",
+            "GET /video/dQw4w9WgXcQ",
+            "GET /transcripts/mkbhd?top_n=3",
+            "GET /comments/mkbhd?top_n=3&max_comments_per_video=10",
+            "GET /test-transcript/dQw4w9WgXcQ"
+        ],
         "notes": [
-            "All endpoints return JSON",
-            "Proxy configured for transcript access",
-            "Rate limits apply per YouTube API quotas"
+            "All endpoints return JSON responses",
+            "Working proxy configured for transcript access", 
+            "Rate limits apply per YouTube API quotas",
+            "Use /test-transcript/{video_id} for debugging transcript issues",
+            "Channel handles should not include @ symbol",
+            "Transcript endpoints handle videos without captions gracefully"
         ]
     }
 
