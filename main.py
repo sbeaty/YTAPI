@@ -4,8 +4,25 @@ import os
 import requests
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from youtube_transcript_api import YouTubeTranscriptApi
 import uvicorn
+
+# Import YouTube Transcript API with error handling
+try:
+    from youtube_transcript_api import YouTubeTranscriptApi
+    TRANSCRIPT_API_AVAILABLE = True
+    print("✅ YouTube Transcript API loaded successfully")
+except ImportError as e:
+    print(f"❌ Failed to import YouTube Transcript API: {e}")
+    TRANSCRIPT_API_AVAILABLE = False
+    # Create a mock class to prevent errors
+    class YouTubeTranscriptApi:
+        @staticmethod
+        def get_transcript(video_id, languages=None):
+            raise Exception("YouTube Transcript API not available")
+        
+        @staticmethod
+        def list_transcripts(video_id):
+            raise Exception("YouTube Transcript API not available")
 
 app = FastAPI(
     title="YouTube Comments & Transcripts API",
@@ -134,6 +151,10 @@ def get_video_comments(video_id: str, max_comments: int = 100) -> list:
 
 def get_video_transcript(video_id: str) -> Optional[str]:
     """Get transcript from a specific video with enhanced language support"""
+    if not TRANSCRIPT_API_AVAILABLE:
+        print(f"❌ YouTube Transcript API not available for video {video_id}")
+        return None
+        
     try:
         # Try to get transcript with language preferences
         # First try with auto-generated and manual transcripts in multiple languages
@@ -335,7 +356,46 @@ def search_videos_by_query(query: str, max_results: int = 10) -> list:
 
 @app.get("/")
 async def root():
-    return {"message": "YouTube Comments & Transcripts API", "version": "1.0.0"}
+    return {
+        "message": "YouTube Comments & Transcripts API", 
+        "version": "1.0.0",
+        "transcript_api_available": TRANSCRIPT_API_AVAILABLE
+    }
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint to verify API status"""
+    return {
+        "status": "healthy",
+        "transcript_api_available": TRANSCRIPT_API_AVAILABLE,
+        "youtube_api_key_configured": bool(api_key),
+        "timestamp": "2024-01-01"  # Will show current deployment
+    }
+
+@app.get("/test-transcript/{video_id}")
+async def test_transcript(video_id: str):
+    """Test transcript functionality for a specific video"""
+    result = {
+        "video_id": video_id,
+        "transcript_api_available": TRANSCRIPT_API_AVAILABLE,
+        "transcript": None,
+        "has_transcript": False,
+        "error": None
+    }
+    
+    if not TRANSCRIPT_API_AVAILABLE:
+        result["error"] = "YouTube Transcript API not available"
+        return result
+    
+    try:
+        transcript = get_video_transcript(video_id)
+        result["transcript"] = transcript
+        result["has_transcript"] = transcript is not None and transcript.strip() != ""
+        result["transcript_length"] = len(transcript) if transcript else 0
+    except Exception as e:
+        result["error"] = str(e)
+    
+    return result
 
 @app.get("/comments/{channel_handle}")
 async def get_channel_comments(
