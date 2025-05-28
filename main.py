@@ -362,12 +362,14 @@ async def get_channel_transcripts(
     videos_with_transcripts = 0
     for video in videos:
         transcript = get_video_transcript(video['id'])
+        # Check if transcript is not None, not empty, and not just whitespace
+        is_valid_transcript = transcript is not None and transcript.strip() != ""
         result["videos"][video['id']] = {
             "video_info": video,
-            "transcript": transcript,
-            "has_transcript": transcript is not None
+            "transcript": transcript if is_valid_transcript else None,
+            "has_transcript": is_valid_transcript
         }
-        if transcript:
+        if is_valid_transcript:
             videos_with_transcripts += 1
     
     result["videos_with_transcripts"] = videos_with_transcripts
@@ -407,12 +409,15 @@ async def get_video_data(
     comments = get_video_comments(video_id, max_comments)
     transcript = get_video_transcript(video_id)
     
+    # Check if transcript is not None, not empty, and not just whitespace
+    is_valid_transcript = transcript is not None and transcript.strip() != ""
+    
     result = {
         "video_info": video_data,
         "comments": comments,
         "comment_count": len(comments),
-        "transcript": transcript,
-        "has_transcript": transcript is not None
+        "transcript": transcript if is_valid_transcript else None,
+        "has_transcript": is_valid_transcript
     }
     
     return result
@@ -461,9 +466,11 @@ async def search_and_analyze(
         # Get transcript if requested
         if include_transcripts:
             transcript = get_video_transcript(video['id'])
-            video_data["transcript"] = transcript
-            video_data["has_transcript"] = transcript is not None
-            if transcript:
+            # Check if transcript is not None, not empty, and not just whitespace
+            is_valid_transcript = transcript is not None and transcript.strip() != ""
+            video_data["transcript"] = transcript if is_valid_transcript else None
+            video_data["has_transcript"] = is_valid_transcript
+            if is_valid_transcript:
                 videos_with_transcripts += 1
         
         result["videos"][video['id']] = video_data
