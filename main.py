@@ -205,6 +205,41 @@ def filter_out_shorts(video_ids: list) -> list:
         print(f"An HTTP error occurred while filtering shorts: {e}")
         return video_ids  # Return original list if filtering fails
 
+def get_channel_subscriber_count(channel_id: str) -> int:
+    """Get subscriber count for a channel"""
+    try:
+        request = youtube.channels().list(
+            part='statistics',
+            id=channel_id
+        )
+        response = request.execute()
+        
+        if response['items']:
+            subscriber_count = response['items'][0]['statistics'].get('subscriberCount', '0')
+            return int(subscriber_count)
+        return 0
+        
+    except HttpError as e:
+        print(f"An HTTP error occurred while getting subscriber count: {e}")
+        return 0
+
+def filter_channels_by_subscribers(videos: list, min_subscribers: int = 5000) -> list:
+    """Filter videos to only include channels with minimum subscriber count"""
+    filtered_videos = []
+    
+    for video in videos:
+        channel_id = video['channel_id']
+        subscriber_count = get_channel_subscriber_count(channel_id)
+        
+        if subscriber_count >= min_subscribers:
+            video['subscriber_count'] = subscriber_count
+            filtered_videos.append(video)
+            print(f"✅ Included: {video['channel_title']} ({subscriber_count:,} subscribers)")
+        else:
+            print(f"❌ Filtered out: {video['channel_title']} ({subscriber_count:,} subscribers)")
+    
+    return filtered_videos
+
 def search_videos_by_query(query: str, max_results: int = 10) -> list:
     """Search for videos by query and return most recent full-format results (no shorts)"""
     try:
@@ -240,13 +275,17 @@ def search_videos_by_query(query: str, max_results: int = 10) -> list:
         # Filter out shorts
         filtered_video_ids = filter_out_shorts(all_video_ids)
         
-        # Build final video list maintaining chronological order
+        # Build video list maintaining chronological order
         videos = []
         for video_id in all_video_ids:  # Maintain original order
-            if video_id in filtered_video_ids and len(videos) < max_results:
+            if video_id in filtered_video_ids:
                 videos.append(video_data_map[video_id])
         
-        return videos
+        # Filter by subscriber count (5K+ subscribers)
+        subscriber_filtered_videos = filter_channels_by_subscribers(videos, min_subscribers=5000)
+        
+        # Return only the requested number of results
+        return subscriber_filtered_videos[:max_results]
         
     except HttpError as e:
         print(f"An HTTP error occurred during search: {e}")
