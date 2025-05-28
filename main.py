@@ -150,61 +150,20 @@ def get_video_comments(video_id: str, max_comments: int = 100) -> list:
     return comments
 
 def get_video_transcript(video_id: str) -> Optional[str]:
-    """Get transcript from a specific video with enhanced language support"""
+    """Get transcript from a specific video - simplified working version"""
     if not TRANSCRIPT_API_AVAILABLE:
         print(f"❌ YouTube Transcript API not available for video {video_id}")
         return None
         
     try:
-        # Try to get transcript with language preferences
-        # First try with auto-generated and manual transcripts in multiple languages
-        language_codes = ['en', 'en-US', 'en-GB', 'auto']
-        
-        transcript_list = None
-        last_error = None
-        
-        for lang in language_codes:
-            try:
-                if lang == 'auto':
-                    # Try getting any available transcript
-                    transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-                else:
-                    transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=[lang])
-                break  # Success, stop trying
-            except Exception as lang_error:
-                last_error = lang_error
-                continue
-        
-        if transcript_list is None:
-            # If no specific language worked, try getting any available transcript
-            try:
-                # Get list of available transcripts and use the first one
-                transcript_data = YouTubeTranscriptApi.list_transcripts(video_id)
-                for transcript in transcript_data:
-                    try:
-                        transcript_list = transcript.fetch()
-                        break
-                    except:
-                        continue
-            except Exception as e:
-                print(f'Error fetching any transcript for video {video_id}: {str(e)}')
-                return None
-        
-        if transcript_list is None:
-            print(f'No transcript available for video {video_id}: {str(last_error)}')
-            return None
-            
-        # Build transcript text
+        # Use the simple approach that works in the notebook
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
         transcript_text = ''
         for item in transcript_list:
-            timestamp = item.get('start', 0)
-            text = item.get('text', '').strip()
-            if text:  # Only add non-empty text
-                transcript_text += f'[{timestamp}] {text}\n'
-        
-        # Return transcript only if it has actual content
-        return transcript_text if transcript_text.strip() else None
-        
+            timestamp = item['start']
+            text = item['text']
+            transcript_text += f'[{timestamp}] {text}\n'
+        return transcript_text
     except Exception as e:
         print(f'Error fetching transcript for video {video_id}: {str(e)}')
         return None
