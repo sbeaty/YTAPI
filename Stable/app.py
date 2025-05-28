@@ -17,106 +17,44 @@ app = Flask(__name__)
 API_KEY = 'AIzaSyAlN-66eLljiexAKjZhbhKKh8B3_IGhf3c'
 youtube = build('youtube', 'v3', developerKey=API_KEY)
 
+# Proxy configuration
+PROXY_CONFIG = {
+    'host': 'gw.dataimpulse.com',
+    'port': '823',
+    'username': 'f3138bb7d6946fd998eb',
+    'password': '9a590d5c36b57e6f'
+}
+
+# Proxy URL for requests
+PROXY_URL = f"http://{PROXY_CONFIG['username']}:{PROXY_CONFIG['password']}@{PROXY_CONFIG['host']}:{PROXY_CONFIG['port']}"
+PROXIES = {
+    'http': PROXY_URL,
+    'https': PROXY_URL
+}
+
 def get_transcript_alternative_1(video_id):
-    """Alternative method 1: Direct timedtext API with user agent"""
+    """Alternative method 1: Direct timedtext API with proxy and user agent"""
     try:
-        languages = ['en', 'en-US', 'en-GB']
-        for lang in languages:
-            url = f"http://video.google.com/timedtext?lang={lang}&v={video_id}"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            
-            req = Request(url, headers=headers)
-            try:
-                response = urlopen(req, timeout=10)
-                data = response.read().decode('utf-8')
-                
-                if data and '<transcript>' in data:
-                    # Parse XML and extract text with timestamps
-                    import xml.etree.ElementTree as ET
-                    try:
-                        root = ET.fromstring(data)
-                        transcript_text = ''
-                        for text_elem in root.findall('.//text'):
-                            start = text_elem.get('start', '0')
-                            text = text_elem.text or ''
-                            if text.strip():
-                                transcript_text += f'[{start}] {text.strip()}\n'
-                        
-                        if transcript_text.strip():
-                            return transcript_text
-                    except ET.ParseError:
-                        continue
-            except (HTTPError, URLError):
-                continue
-        
-        return None
-    except Exception as e:
-        print(f"Alternative method 1 failed: {e}")
-        return None
-
-def get_transcript_alternative_2(video_id):
-    """Alternative method 2: YouTube transcript API with enhanced error handling"""
-    try:
-        # Try multiple language codes
-        language_codes = ['en', 'en-US', 'en-GB', 'en-CA', 'en-AU']
-        
-        for lang in language_codes:
-            try:
-                transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=[lang])
-                transcript_text = ''
-                for item in transcript_list:
-                    timestamp = item['start']
-                    text = item['text']
-                    transcript_text += f'[{timestamp}] {text}\n'
-                
-                if transcript_text.strip():
-                    return transcript_text
-            except Exception:
-                continue
-        
-        # Try without language specification
-        try:
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-            transcript_text = ''
-            for item in transcript_list:
-                timestamp = item['start']
-                text = item['text']
-                transcript_text += f'[{timestamp}] {text}\n'
-            
-            if transcript_text.strip():
-                return transcript_text
-        except Exception:
-            pass
-        
-        return None
-    except Exception as e:
-        print(f"Alternative method 2 failed: {e}")
-        return None
-
-def get_transcript_alternative_3(video_id):
-    """Alternative method 3: Using requests with session and headers"""
-    try:
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
-        })
-        
         languages = ['en', 'en-US', 'en-GB']
         for lang in languages:
             url = f"https://video.google.com/timedtext?lang={lang}&v={video_id}"
             
+            # Use requests with proxy instead of urllib
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/png,*/*;q=0.5',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive'
+            }
+            
             try:
-                response = session.get(url, timeout=15)
+                response = requests.get(url, headers=headers, proxies=PROXIES, timeout=15)
                 if response.status_code == 200 and response.text:
                     data = response.text
                     
-                    if '<transcript>' in data:
+                    if '<transcript>' in data or '<text' in data:
+                        # Parse XML and extract text with timestamps
                         import xml.etree.ElementTree as ET
                         try:
                             root = ET.fromstring(data)
@@ -131,7 +69,114 @@ def get_transcript_alternative_3(video_id):
                                 return transcript_text
                         except ET.ParseError:
                             continue
-            except requests.RequestException:
+            except requests.RequestException as e:
+                print(f"Request failed for {url}: {e}")
+                continue
+        
+        return None
+    except Exception as e:
+        print(f"Alternative method 1 failed: {e}")
+        return None
+
+def get_transcript_alternative_2(video_id):
+    """Alternative method 2: YouTube transcript API with proxy support"""
+    try:
+        # Configure proxy for youtube-transcript-api
+        from youtube_transcript_api.proxies import proxies_list
+        
+        # Try multiple language codes
+        language_codes = ['en', 'en-US', 'en-GB', 'en-CA', 'en-AU']
+        
+        for lang in language_codes:
+            try:
+                # Try with proxy configuration if available
+                proxy_config = {
+                    'http': PROXY_URL,
+                    'https': PROXY_URL
+                }
+                
+                transcript_list = YouTubeTranscriptApi.get_transcript(
+                    video_id, 
+                    languages=[lang],
+                    proxies=proxy_config
+                )
+                transcript_text = ''
+                for item in transcript_list:
+                    timestamp = item['start']
+                    text = item['text']
+                    transcript_text += f'[{timestamp}] {text}\n'
+                
+                if transcript_text.strip():
+                    return transcript_text
+            except Exception as e:
+                print(f"Transcript API failed for language {lang}: {e}")
+                continue
+        
+        # Try without language specification but with proxy
+        try:
+            transcript_list = YouTubeTranscriptApi.get_transcript(
+                video_id,
+                proxies={'http': PROXY_URL, 'https': PROXY_URL}
+            )
+            transcript_text = ''
+            for item in transcript_list:
+                timestamp = item['start']
+                text = item['text']
+                transcript_text += f'[{timestamp}] {text}\n'
+            
+            if transcript_text.strip():
+                return transcript_text
+        except Exception as e:
+            print(f"Transcript API without language failed: {e}")
+            pass
+        
+        return None
+    except Exception as e:
+        print(f"Alternative method 2 failed: {e}")
+        return None
+
+def get_transcript_alternative_3(video_id):
+    """Alternative method 3: Using requests with session, headers and proxy"""
+    try:
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none'
+        })
+        session.proxies.update(PROXIES)
+        
+        languages = ['en', 'en-US', 'en-GB']
+        for lang in languages:
+            url = f"https://video.google.com/timedtext?lang={lang}&v={video_id}"
+            
+            try:
+                response = session.get(url, timeout=20)
+                if response.status_code == 200 and response.text:
+                    data = response.text
+                    
+                    if '<transcript>' in data or '<text' in data:
+                        import xml.etree.ElementTree as ET
+                        try:
+                            root = ET.fromstring(data)
+                            transcript_text = ''
+                            for text_elem in root.findall('.//text'):
+                                start = text_elem.get('start', '0')
+                                text = text_elem.text or ''
+                                if text.strip():
+                                    transcript_text += f'[{start}] {text.strip()}\n'
+                            
+                            if transcript_text.strip():
+                                return transcript_text
+                        except ET.ParseError:
+                            continue
+            except requests.RequestException as e:
+                print(f"Session request failed for {url}: {e}")
                 continue
         
         return None
@@ -140,7 +185,7 @@ def get_transcript_alternative_3(video_id):
         return None
 
 def get_transcript_alternative_4(video_id):
-    """Alternative method 4: Using yt-dlp for subtitle extraction"""
+    """Alternative method 4: Using yt-dlp for subtitle extraction with proxy"""
     try:
         # Check if yt-dlp is available
         result = subprocess.run(['which', 'yt-dlp'], capture_output=True, text=True)
@@ -160,11 +205,12 @@ def get_transcript_alternative_4(video_id):
                         '--sub-lang', 'en',
                         '--sub-format', 'srv1',
                         '--skip-download',
+                        '--proxy', PROXY_URL,
                         '--output', f'{temp_dir}/%(title)s.%(ext)s',
                         video_url
                     ]
                     
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
                     
                     if result.returncode == 0:
                         # Look for subtitle files
@@ -569,6 +615,51 @@ def get_docs():
         ]
     }
     return jsonify(docs), 200
+
+@app.route('/test-proxy', methods=['GET'])
+def test_proxy():
+    """Test proxy functionality by checking IP address"""
+    try:
+        # Test without proxy
+        response_no_proxy = requests.get('https://api.ipify.org?format=json', timeout=10)
+        ip_no_proxy = response_no_proxy.json().get('ip', 'unknown')
+        
+        # Test with proxy
+        response_with_proxy = requests.get('https://api.ipify.org?format=json', proxies=PROXIES, timeout=15)
+        ip_with_proxy = response_with_proxy.json().get('ip', 'unknown')
+        
+        # Test YouTube timedtext API with proxy
+        test_video_id = 'dQw4w9WgXcQ'
+        test_url = f"https://video.google.com/timedtext?lang=en&v={test_video_id}"
+        
+        try:
+            yt_response = requests.get(test_url, proxies=PROXIES, timeout=15)
+            yt_status = yt_response.status_code
+            yt_response_length = len(yt_response.text)
+            yt_has_content = '<text' in yt_response.text or '<transcript>' in yt_response.text
+        except Exception as e:
+            yt_status = f"Error: {str(e)}"
+            yt_response_length = 0
+            yt_has_content = False
+        
+        return jsonify({
+            'proxy_config': {
+                'host': PROXY_CONFIG['host'],
+                'port': PROXY_CONFIG['port'],
+                'username': PROXY_CONFIG['username'][:5] + '***'  # Hide full username
+            },
+            'ip_without_proxy': ip_no_proxy,
+            'ip_with_proxy': ip_with_proxy,
+            'proxy_working': ip_no_proxy != ip_with_proxy,
+            'youtube_test': {
+                'url': test_url,
+                'status': yt_status,
+                'response_length': yt_response_length,
+                'has_transcript_content': yt_has_content
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({'error': f'Proxy test failed: {str(e)}'}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8001)
