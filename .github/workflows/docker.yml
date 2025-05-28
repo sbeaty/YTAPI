@@ -43,3 +43,48 @@ jobs:
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Deploy to Linode server
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.LINODE_HOST }}
+        username: ${{ secrets.LINODE_USER }}
+        password: ${{ secrets.LINODE_PASSWORD }}
+        script: |
+          echo "🚀 Starting automatic deployment..."
+          
+          # Stop and remove existing container
+          docker stop ytapi-container 2>/dev/null || true
+          docker rm ytapi-container 2>/dev/null || true
+          
+          # Remove old image to save space
+          docker rmi sbeaty/ytapi:latest 2>/dev/null || true
+          
+          # Pull latest image
+          echo "📦 Pulling latest image..."
+          docker pull sbeaty/ytapi:latest
+          
+          # Start new container
+          echo "🔄 Starting new container..."
+          docker run -d \
+            --name ytapi-container \
+            --restart unless-stopped \
+            -p 8001:8001 \
+            sbeaty/ytapi:latest
+          
+          # Verify deployment
+          echo "✅ Checking deployment..."
+          sleep 5
+          if docker ps | grep -q ytapi-container; then
+            echo "🎉 Deployment successful!"
+            echo "📍 API is running at: http://45.33.70.141:8001"
+          else
+            echo "❌ Deployment failed!"
+            exit 1
+          fi
