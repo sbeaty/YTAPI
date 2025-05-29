@@ -709,16 +709,16 @@ async def get_api_docs():
                 "example": "/channel-content/mkbhd?top_n=10&max_comments_per_video=30"
             },
             {
-                "path": "/search-filtered?query={query}&top_n={num}&min_subscribers={num}",
+                "path": "/search-filtered?query={query}&top_n={num}&min_subscribers={num}&max_comments_per_video={num}",
                 "method": "GET",
-                "description": "Search videos: 1K+ subs, no shorts, has transcripts, sorted recent first",
-                "example": "/search-filtered?query=AI tutorial&top_n=5&min_subscribers=5000"
+                "description": "Search videos: 1K+ subs, no shorts, has transcripts+comments, sorted recent first",
+                "example": "/search-filtered?query=AI tutorial&top_n=5&min_subscribers=5000&max_comments_per_video=30"
             }
         ],
         "testing_examples": [
             "GET /transcript?videoId=dQw4w9WgXcQ",
             "GET /search?query=tutorial&maxResults=5", 
-            "GET /search-filtered?query=AI tutorial&top_n=5&min_subscribers=1000",
+            "GET /search-filtered?query=AI tutorial&top_n=5&min_subscribers=1000&max_comments_per_video=30",
             "GET /video_details?videoId=dQw4w9WgXcQ",
             "GET /video/dQw4w9WgXcQ",
             "GET /transcripts/mkbhd?top_n=3",
@@ -952,9 +952,10 @@ async def get_channel_content_filtered(
 async def search_videos_filtered(
     query: str = Query(..., description="Search query"),
     top_n: int = Query(default=10, ge=1, le=20, description="Number of videos to return"),
-    min_subscribers: int = Query(default=1000, ge=100, le=50000, description="Minimum subscriber count")
+    min_subscribers: int = Query(default=1000, ge=100, le=50000, description="Minimum subscriber count"),
+    max_comments_per_video: int = Query(default=30, ge=1, le=500, description="Maximum comments per video")
 ):
-    """Search videos with filtering: 1K+ subs, no shorts, must have transcripts, sorted by recent"""
+    """Search videos with filtering: 1K+ subs, no shorts, must have transcripts + comments, sorted by recent"""
     try:
         # Search for more videos initially to account for filtering
         search_limit = min(top_n * 5, 50)  # Get 5x more to filter
@@ -988,8 +989,10 @@ async def search_videos_filtered(
         # Filter out shorts
         filtered_video_ids = filter_out_shorts(all_video_ids)
         
-        # Filter by subscriber count and transcript availability
+        # Filter by subscriber count, transcript availability, and get comments
         result_videos = []
+        total_comments = 0
+        videos_with_transcripts = 0
         
         for video_data in all_video_data:
             if video_data['id'] not in filtered_video_ids:
@@ -1011,14 +1014,52 @@ async def search_videos_filtered(
                     text = item['text']
                     transcript_text += f'[{timestamp}] {text}\n'
                 has_transcript = True
+                videos_with_transcripts += 1
             except Exception:
                 continue  # Skip videos without transcripts
             
-            video_data['subscriber_count'] = subscriber_count
-            video_data['transcript'] = transcript_text
-            video_data['has_transcript'] = has_transcript
+            # Get comments for this video
+            comments = []
+            try:
+                comments_response = youtube.commentThreads().list(
+                    part="snippet",
+                    videoId=video_data['id'],
+                    maxResults=max_comments_per_video,
+                    textFormat="plainText"
+                ).execute()
+                
+                for item in comments_response.get('items', []):
+                    comment_data = item['snippet']['topLevelComment']['snippet']
+                    comments.append({
+                        'author': comment_data['authorDisplayName'],
+                        'text': comment_data['textDisplay'],
+                        'publishedAt': comment_data['publishedAt'],
+                        'likeCount': comment_data['likeCount']
+                    })
+                total_comments += len(comments)
+                
+            except Exception as e:
+                print(f"Comments error for {video_data['id']}: {e}")
             
-            result_videos.append(video_data)
+            # Build complete video data with both transcript and comments
+            complete_video_data = {
+                'video_info': {
+                    'id': video_data['id'],
+                    'title': video_data['title'],
+                    'url': video_data['url'],
+                    'publishedAt': video_data['publishedAt'],
+                    'channelTitle': video_data['channelTitle'],
+                    'channelId': video_data['channelId'],
+                    'thumbnail': video_data['thumbnail'],
+                    'subscriber_count': subscriber_count
+                },
+                'transcript': transcript_text,
+                'has_transcript': has_transcript,
+                'comments': comments,
+                'comment_count': len(comments)
+            }
+            
+            result_videos.append(complete_video_data)
             
             # Stop when we have enough videos
             if len(result_videos) >= top_n:
@@ -1027,6 +1068,8 @@ async def search_videos_filtered(
         return {
             "query": query,
             "videos_found": len(result_videos),
+            "videos_with_transcripts": videos_with_transcripts,
+            "total_comments": total_comments,
             "min_subscribers": min_subscribers,
             "filters_applied": ["no_shorts", "has_transcript", f"min_{min_subscribers}_subs"],
             "videos": result_videos
