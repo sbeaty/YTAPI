@@ -701,15 +701,29 @@ async def get_api_docs():
                 "method": "GET",
                 "description": "Get comments from top N recent videos of channel",
                 "example": "/comments/mkbhd?top_n=5&max_comments_per_video=50"
+            },
+            {
+                "path": "/channel-content/{channel_handle}?top_n={num}&max_comments_per_video={num}",
+                "method": "GET", 
+                "description": "Get N recent videos with transcripts+comments (no shorts, sorted recent first)",
+                "example": "/channel-content/mkbhd?top_n=10&max_comments_per_video=30"
+            },
+            {
+                "path": "/search-filtered?query={query}&top_n={num}&min_subscribers={num}",
+                "method": "GET",
+                "description": "Search videos: 1K+ subs, no shorts, has transcripts, sorted recent first",
+                "example": "/search-filtered?query=AI tutorial&top_n=5&min_subscribers=5000"
             }
         ],
         "testing_examples": [
             "GET /transcript?videoId=dQw4w9WgXcQ",
             "GET /search?query=tutorial&maxResults=5", 
+            "GET /search-filtered?query=AI tutorial&top_n=5&min_subscribers=1000",
             "GET /video_details?videoId=dQw4w9WgXcQ",
             "GET /video/dQw4w9WgXcQ",
             "GET /transcripts/mkbhd?top_n=3",
             "GET /comments/mkbhd?top_n=3&max_comments_per_video=10",
+            "GET /channel-content/mkbhd?top_n=5&max_comments_per_video=20",
             "GET /test-transcript/dQw4w9WgXcQ"
         ],
         "notes": [
@@ -721,6 +735,305 @@ async def get_api_docs():
             "Transcript endpoints handle videos without captions gracefully"
         ]
     }
+
+def filter_out_shorts(video_ids: list) -> list:
+    """Filter out YouTube Shorts (videos <= 60 seconds) from a list of video IDs"""
+    if not video_ids:
+        return []
+    
+    try:
+        filtered_ids = []
+        # Process in batches of 50 (YouTube API limit)
+        for i in range(0, len(video_ids), 50):
+            batch = video_ids[i:i+50]
+            video_ids_str = ','.join(batch)
+            
+            response = youtube.videos().list(
+                part='contentDetails',
+                id=video_ids_str
+            ).execute()
+            
+            for video in response['items']:
+                duration = video['contentDetails']['duration']
+                # Parse ISO 8601 duration (PT#M#S format)
+                if 'PT' in duration:
+                    duration_clean = duration.replace('PT', '')
+                    total_seconds = 0
+                    
+                    if 'H' in duration_clean:
+                        # Has hours, definitely not a short
+                        filtered_ids.append(video['id'])
+                        continue
+                    
+                    if 'M' in duration_clean:
+                        minutes_part = duration_clean.split('M')[0]
+                        try:
+                            minutes = int(minutes_part)
+                            total_seconds += minutes * 60
+                            duration_clean = duration_clean.split('M')[1]
+                        except ValueError:
+                            continue
+                    
+                    if 'S' in duration_clean:
+                        seconds_part = duration_clean.replace('S', '')
+                        try:
+                            if seconds_part:
+                                seconds = int(seconds_part)
+                                total_seconds += seconds
+                        except ValueError:
+                            continue
+                    
+                    # Only include videos longer than 60 seconds
+                    if total_seconds > 60:
+                        filtered_ids.append(video['id'])
+        
+        return filtered_ids
+        
+    except Exception as e:
+        print(f"Error filtering shorts: {e}")
+        return video_ids  # Return original list if filtering fails
+
+def get_channel_subscriber_count(channel_id: str) -> int:
+    """Get subscriber count for a channel"""
+    try:
+        response = youtube.channels().list(
+            part='statistics',
+            id=channel_id
+        ).execute()
+        
+        if response['items']:
+            subscriber_count = response['items'][0]['statistics'].get('subscriberCount', '0')
+            return int(subscriber_count)
+        return 0
+        
+    except Exception as e:
+        print(f"Error getting subscriber count: {e}")
+        return 0
+
+@app.get("/channel-content/{channel_handle}")
+async def get_channel_content_filtered(
+    channel_handle: str,
+    top_n: int = Query(default=10, ge=1, le=50, description="Number of recent videos to process"),
+    max_comments_per_video: int = Query(default=50, ge=1, le=1000, description="Maximum comments per video")
+):
+    """Get N recent videos from channel with transcripts and comments (no shorts, sorted by recent)"""
+    try:
+        # Get channel ID from handle
+        import requests
+        url = f'https://www.googleapis.com/youtube/v3/channels?part=id&forHandle={channel_handle}&key={API_KEY}'
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"Error retrieving channel ID. Status: {response.status_code}")
+        
+        data = response.json()
+        if 'items' not in data or len(data['items']) == 0:
+            raise HTTPException(status_code=404, detail=f"No channel found with handle: {channel_handle}")
+        
+        channel_id = data['items'][0]['id']
+        
+        # Get recent videos (more than needed to account for filtering)
+        channel_response = youtube.channels().list(
+            part='contentDetails',
+            id=channel_id
+        ).execute()
+
+        uploads_playlist_id = channel_response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+
+        # Get more videos initially to account for filtering out shorts
+        fetch_limit = top_n * 3  # Get 3x more to filter
+        videos = []
+        next_page_token = None
+        
+        while len(videos) < fetch_limit:
+            items_to_fetch = min(50, fetch_limit - len(videos))
+            
+            playlist_response = youtube.playlistItems().list(
+                part='snippet',
+                playlistId=uploads_playlist_id,
+                maxResults=items_to_fetch,
+                pageToken=next_page_token
+            ).execute()
+            
+            videos.extend(playlist_response['items'])
+            next_page_token = playlist_response.get('nextPageToken')
+            
+            if not next_page_token:
+                break
+
+        # Filter out shorts
+        all_video_ids = [video['snippet']['resourceId']['videoId'] for video in videos]
+        filtered_video_ids = filter_out_shorts(all_video_ids)
+        
+        # Build final video list maintaining chronological order
+        filtered_videos = []
+        for video in videos:
+            video_id = video['snippet']['resourceId']['videoId']
+            if video_id in filtered_video_ids and len(filtered_videos) < top_n:
+                filtered_videos.append(video)
+
+        # Get content for each filtered video
+        result_videos = []
+        videos_with_transcripts = 0
+        total_comments = 0
+        
+        for video in filtered_videos:
+            video_id = video['snippet']['resourceId']['videoId']
+            video_title = video['snippet']['title']
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            
+            # Get transcript
+            transcript_text = None
+            has_transcript = False
+            try:
+                transcript_list = YouTubeTranscriptApi.get_transcript(video_id, proxies=PROXIES)
+                transcript_text = ""
+                for item in transcript_list:
+                    timestamp = item['start']
+                    text = item['text']
+                    transcript_text += f'[{timestamp}] {text}\n'
+                has_transcript = True
+                videos_with_transcripts += 1
+            except Exception as e:
+                transcript_error = str(e)
+            
+            # Get comments
+            comments = []
+            try:
+                comments_response = youtube.commentThreads().list(
+                    part="snippet",
+                    videoId=video_id,
+                    maxResults=max_comments_per_video,
+                    textFormat="plainText"
+                ).execute()
+                
+                for item in comments_response.get('items', []):
+                    comment_data = item['snippet']['topLevelComment']['snippet']
+                    comments.append({
+                        'author': comment_data['authorDisplayName'],
+                        'text': comment_data['textDisplay'],
+                        'publishedAt': comment_data['publishedAt'],
+                        'likeCount': comment_data['likeCount']
+                    })
+                total_comments += len(comments)
+                
+            except Exception as e:
+                print(f"Comments error for {video_id}: {e}")
+            
+            result_videos.append({
+                'video_info': {
+                    'id': video_id,
+                    'title': video_title,
+                    'url': video_url,
+                    'publishedAt': video['snippet']['publishedAt'],
+                    'thumbnail': video['snippet']['thumbnails']['default']['url']
+                },
+                'transcript': transcript_text,
+                'has_transcript': has_transcript,
+                'comments': comments,
+                'comment_count': len(comments)
+            })
+
+        return {
+            "channel_handle": channel_handle,
+            "channel_id": channel_id,
+            "videos_processed": len(result_videos),
+            "videos_with_transcripts": videos_with_transcripts,
+            "total_comments": total_comments,
+            "videos": result_videos
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/search-filtered")
+async def search_videos_filtered(
+    query: str = Query(..., description="Search query"),
+    top_n: int = Query(default=10, ge=1, le=20, description="Number of videos to return"),
+    min_subscribers: int = Query(default=1000, ge=100, le=50000, description="Minimum subscriber count")
+):
+    """Search videos with filtering: 1K+ subs, no shorts, must have transcripts, sorted by recent"""
+    try:
+        # Search for more videos initially to account for filtering
+        search_limit = min(top_n * 5, 50)  # Get 5x more to filter
+        
+        response = youtube.search().list(
+            part="snippet",
+            q=query,
+            type="video",
+            order="date",  # Sort by most recent
+            maxResults=search_limit,
+            publishedAfter="2020-01-01T00:00:00Z"  # Recent videos only
+        ).execute()
+        
+        # Collect all video data
+        all_video_data = []
+        all_video_ids = []
+        
+        for item in response.get('items', []):
+            video_id = item['id']['videoId']
+            all_video_ids.append(video_id)
+            all_video_data.append({
+                'id': video_id,
+                'title': item['snippet']['title'],
+                'url': f"https://www.youtube.com/watch?v={video_id}",
+                'publishedAt': item['snippet']['publishedAt'],
+                'channelTitle': item['snippet']['channelTitle'],
+                'channelId': item['snippet']['channelId'],
+                'thumbnail': item['snippet']['thumbnails']['default']['url']
+            })
+        
+        # Filter out shorts
+        filtered_video_ids = filter_out_shorts(all_video_ids)
+        
+        # Filter by subscriber count and transcript availability
+        result_videos = []
+        
+        for video_data in all_video_data:
+            if video_data['id'] not in filtered_video_ids:
+                continue  # Skip shorts
+            
+            # Check subscriber count
+            subscriber_count = get_channel_subscriber_count(video_data['channelId'])
+            if subscriber_count < min_subscribers:
+                continue  # Skip channels with low subscriber count
+            
+            # Check for transcript availability
+            has_transcript = False
+            transcript_text = None
+            try:
+                transcript_list = YouTubeTranscriptApi.get_transcript(video_data['id'], proxies=PROXIES)
+                transcript_text = ""
+                for item in transcript_list:
+                    timestamp = item['start']
+                    text = item['text']
+                    transcript_text += f'[{timestamp}] {text}\n'
+                has_transcript = True
+            except Exception:
+                continue  # Skip videos without transcripts
+            
+            video_data['subscriber_count'] = subscriber_count
+            video_data['transcript'] = transcript_text
+            video_data['has_transcript'] = has_transcript
+            
+            result_videos.append(video_data)
+            
+            # Stop when we have enough videos
+            if len(result_videos) >= top_n:
+                break
+        
+        return {
+            "query": query,
+            "videos_found": len(result_videos),
+            "min_subscribers": min_subscribers,
+            "filters_applied": ["no_shorts", "has_transcript", f"min_{min_subscribers}_subs"],
+            "videos": result_videos
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001)
