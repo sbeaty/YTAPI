@@ -16,7 +16,10 @@
       "Bash(cp:*)",
       "Bash(find:*)",
       "Bash(grep:*)",
-      "Bash(git reset:*)"
+      "Bash(git reset:*)",
+      "Bash(git merge:*)",
+      "WebFetch(domain:dev.to)",
+      "WebFetch(domain:github.com)"
     ],
     "deny": []
   },

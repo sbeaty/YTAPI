@@ -1,9 +1,16 @@
 from fastapi import FastAPI, HTTPException, Query
 from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api.proxies import GenericProxyConfig
 from googleapiclient.discovery import build
 from urllib.parse import urlparse, parse_qs
 import uvicorn
+
+# Try to import proxy configuration, fallback if not available
+try:
+    from youtube_transcript_api.proxies import GenericProxyConfig
+    PROXY_SUPPORT = True
+except ImportError:
+    PROXY_SUPPORT = False
+    print("Warning: GenericProxyConfig not available, using old proxy method")
 
 app = FastAPI(
     title="YouTube Comments & Transcripts API",
@@ -11,20 +18,24 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# Working API key and proper proxy configuration
+# Working API key and proxy configuration
 API_KEY = 'AIzaSyBr-juudGbZtHf4xCTFtxF065SfO8b3YQU'
 PROXY_URL = "https://f3138bb7d6946fd998eb:9a590d5c36b57e6f@gw.dataimpulse.com:823"
 PROXIES = {"https": PROXY_URL, "http": PROXY_URL}
 
-# Proper YouTube Transcript API proxy configuration
-PROXY_CONFIG = GenericProxyConfig(
-    http_url="http://f3138bb7d6946fd998eb:9a590d5c36b57e6f@gw.dataimpulse.com:823",
-    https_url="https://f3138bb7d6946fd998eb:9a590d5c36b57e6f@gw.dataimpulse.com:823"
-)
-
-# Create YouTube Transcript API instance with proxy
-ytt_api_proxy = YouTubeTranscriptApi(proxy_config=PROXY_CONFIG)
-ytt_api_no_proxy = YouTubeTranscriptApi()
+# Create YouTube Transcript API instances
+if PROXY_SUPPORT:
+    # Use proper proxy configuration if available
+    PROXY_CONFIG = GenericProxyConfig(
+        http_url="http://f3138bb7d6946fd998eb:9a590d5c36b57e6f@gw.dataimpulse.com:823",
+        https_url="https://f3138bb7d6946fd998eb:9a590d5c36b57e6f@gw.dataimpulse.com:823"
+    )
+    ytt_api_proxy = YouTubeTranscriptApi(proxy_config=PROXY_CONFIG)
+    ytt_api_no_proxy = YouTubeTranscriptApi()
+else:
+    # Fallback to old method
+    ytt_api_proxy = None
+    ytt_api_no_proxy = YouTubeTranscriptApi()
 
 youtube = build('youtube', 'v3', developerKey=API_KEY)
 
@@ -73,8 +84,13 @@ async def debug_transcript(video_id: str):
     
     # Test proper proxy method
     try:
-        transcript = ytt_api_proxy.get_transcript(video_id)
-        result["proxy_test"] = f"SUCCESS: Got {len(transcript)} transcript items"
+        if PROXY_SUPPORT and ytt_api_proxy:
+            transcript = ytt_api_proxy.get_transcript(video_id)
+            result["proxy_test"] = f"SUCCESS: Got {len(transcript)} transcript items"
+        else:
+            # Fallback to old proxy method
+            transcript = YouTubeTranscriptApi.get_transcript(video_id, proxies=PROXIES)
+            result["proxy_test"] = f"SUCCESS (old method): Got {len(transcript)} transcript items"
     except Exception as e:
         result["proxy_test"] = f"FAILED: {str(e)}"
     
@@ -105,19 +121,31 @@ async def get_transcript(videoId: str = Query(..., description="YouTube video ID
     except Exception as e:
         print(f"Could not list transcripts for {videoId}: {e}")
     
-    # Try with proper proxy configuration first
+    # Try with proxy configuration first
     try:
-        transcript = ytt_api_proxy.get_transcript(videoId)
-        text = " ".join([item['text'] for item in transcript])
-        return {"transcript": text, "method": "proper_proxy"}
+        if PROXY_SUPPORT and ytt_api_proxy:
+            transcript = ytt_api_proxy.get_transcript(videoId)
+            text = " ".join([item['text'] for item in transcript])
+            return {"transcript": text, "method": "proper_proxy"}
+        else:
+            # Fallback to old proxy method
+            transcript = YouTubeTranscriptApi.get_transcript(videoId, proxies=PROXIES)
+            text = " ".join([item['text'] for item in transcript])
+            return {"transcript": text, "method": "old_proxy"}
     except Exception as e:
-        print(f"Proper proxy method failed for {videoId}: {e}")
+        print(f"Proxy method failed for {videoId}: {e}")
         
     # Try with proxy and different languages
     try:
-        transcript = ytt_api_proxy.get_transcript(videoId, languages=['en', 'en-US', 'en-GB'])
-        text = " ".join([item['text'] for item in transcript])
-        return {"transcript": text, "method": "proxy_multi_lang"}
+        if PROXY_SUPPORT and ytt_api_proxy:
+            transcript = ytt_api_proxy.get_transcript(videoId, languages=['en', 'en-US', 'en-GB'])
+            text = " ".join([item['text'] for item in transcript])
+            return {"transcript": text, "method": "proxy_multi_lang"}
+        else:
+            # Fallback to old proxy method with languages
+            transcript = YouTubeTranscriptApi.get_transcript(videoId, languages=['en', 'en-US', 'en-GB'], proxies=PROXIES)
+            text = " ".join([item['text'] for item in transcript])
+            return {"transcript": text, "method": "old_proxy_multi_lang"}
     except Exception as e:
         print(f"Proxy multi-language method failed for {videoId}: {e}")
         
