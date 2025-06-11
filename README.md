@@ -5,9 +5,11 @@ A FastAPI-based service for extracting comments and transcripts from YouTube vid
 ## Features
 
 - Extract comments from specific YouTube videos
-- Get transcripts from YouTube videos
+- Get transcripts from YouTube videos with proxy support
 - Analyze recent videos from specific channels
 - Search for videos by query and analyze top N most recent results
+- **NEW**: Extract ALL videos from a channel with transcripts and comments
+- Advanced filtering: exclude YouTube Shorts, filter by subscriber count
 - RESTful API with automatic documentation
 
 ## Endpoints
@@ -18,6 +20,7 @@ A FastAPI-based service for extracting comments and transcripts from YouTube vid
 ### 2. Channel Analysis
 - **GET** `/comments/{channel_handle}` - Get comments from recent videos of a channel
 - **GET** `/transcripts/{channel_handle}` - Get transcripts from recent videos of a channel
+- **GET** `/channel-full-content` - **NEW**: Get ALL videos from channel with transcripts and optionally comments
 
 ### 3. Single Video Analysis
 - **GET** `/video/{video_id}` - Get both comments and transcript for a single video
@@ -34,6 +37,20 @@ A FastAPI-based service for extracting comments and transcripts from YouTube vid
 #### Example Usage:
 ```
 GET /search?query=python%20tutorial&top_n=3&max_comments_per_video=50&include_transcripts=true
+```
+
+### 5. Full Channel Content (NEW)
+- **GET** `/channel-full-content` - Extract ALL videos from a channel with transcripts and comments
+
+#### Parameters:
+- `channel_handle` (required): YouTube channel handle (without @)
+- `include_comments` (default: true): Whether to include comments for each video
+- `max_comments_per_video` (default: 50, max: 1000): Maximum comments per video
+
+#### Example Usage:
+```
+GET /channel-full-content?channel_handle=mkbhd&include_comments=true&max_comments_per_video=30
+GET /channel-full-content?channel_handle=mkbhd&include_comments=false
 ```
 
 ## Installation
