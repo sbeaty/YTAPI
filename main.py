@@ -292,6 +292,143 @@ async def get_channel_videos(channel_id: str = Query(..., description="YouTube c
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/channel-full-content")
+async def get_channel_full_content(
+    channel_handle: str = Query(..., description="YouTube channel handle"),
+    include_comments: bool = Query(default=True, description="Include comments for each video"),
+    max_comments_per_video: int = Query(default=50, ge=1, le=1000, description="Maximum comments per video")
+):
+    """Get ALL videos from channel with transcripts and optionally comments"""
+    try:
+        # Get channel ID from handle
+        import requests
+        url = f'https://www.googleapis.com/youtube/v3/channels?part=id&forHandle={channel_handle}&key={API_KEY}'
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"Error retrieving channel ID. Status: {response.status_code}")
+        
+        data = response.json()
+        if 'items' not in data or len(data['items']) == 0:
+            raise HTTPException(status_code=404, detail=f"No channel found with handle: {channel_handle}")
+        
+        channel_id = data['items'][0]['id']
+        
+        # Get channel uploads playlist
+        channel_response = youtube.channels().list(
+            part='contentDetails',
+            id=channel_id
+        ).execute()
+
+        if 'items' not in channel_response or len(channel_response['items']) == 0:
+            raise HTTPException(status_code=404, detail=f"No channel found with ID: {channel_id}")
+
+        uploads_playlist_id = channel_response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+
+        # Get ALL videos from uploads playlist
+        all_videos = []
+        next_page_token = None
+        
+        while True:
+            playlist_response = youtube.playlistItems().list(
+                part='snippet',
+                playlistId=uploads_playlist_id,
+                maxResults=50,
+                pageToken=next_page_token
+            ).execute()
+            
+            all_videos.extend(playlist_response['items'])
+            next_page_token = playlist_response.get('nextPageToken')
+            
+            if not next_page_token:
+                break
+
+        # Process each video for transcripts and optionally comments
+        result_videos = []
+        videos_with_transcripts = 0
+        total_comments = 0
+        
+        for video in all_videos:
+            video_id = video['snippet']['resourceId']['videoId']
+            video_title = video['snippet']['title']
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            
+            # Get transcript using proxy method from notebook
+            transcript_text = None
+            has_transcript = False
+            try:
+                transcript_list = YouTubeTranscriptApi.get_transcript(video_id, proxies=PROXIES)
+                transcript_text = ""
+                for item in transcript_list:
+                    timestamp = item['start']
+                    text = item['text']
+                    transcript_text += f'[{timestamp}] {text}\n'
+                has_transcript = True
+                videos_with_transcripts += 1
+            except Exception as e:
+                transcript_error = str(e)
+            
+            # Get comments if requested
+            comments = []
+            if include_comments:
+                try:
+                    comments_response = youtube.commentThreads().list(
+                        part="snippet",
+                        videoId=video_id,
+                        maxResults=max_comments_per_video,
+                        textFormat="plainText"
+                    ).execute()
+                    
+                    for item in comments_response.get('items', []):
+                        comment_data = item['snippet']['topLevelComment']['snippet']
+                        comments.append({
+                            'author': comment_data['authorDisplayName'],
+                            'text': comment_data['textDisplay'],
+                            'publishedAt': comment_data['publishedAt'],
+                            'likeCount': comment_data['likeCount']
+                        })
+                    total_comments += len(comments)
+                    
+                except Exception as e:
+                    print(f"Comments error for {video_id}: {e}")
+            
+            video_data = {
+                'video_info': {
+                    'id': video_id,
+                    'title': video_title,
+                    'url': video_url,
+                    'publishedAt': video['snippet']['publishedAt'],
+                    'thumbnail': video['snippet']['thumbnails']['default']['url']
+                },
+                'transcript': transcript_text,
+                'has_transcript': has_transcript
+            }
+            
+            if include_comments:
+                video_data['comments'] = comments
+                video_data['comment_count'] = len(comments)
+            
+            result_videos.append(video_data)
+
+        result = {
+            "channel_handle": channel_handle,
+            "channel_id": channel_id,
+            "total_videos": len(result_videos),
+            "videos_with_transcripts": videos_with_transcripts,
+            "include_comments": include_comments,
+            "videos": result_videos
+        }
+        
+        if include_comments:
+            result["total_comments"] = total_comments
+            
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/docs-api")
 async def get_api_docs():
     """API Documentation"""
@@ -339,6 +476,11 @@ async def get_api_docs():
                 "path": "/channel-videos?channel_id={id}",
                 "description": "Get all videos from channel",
                 "example": "/channel-videos?channel_id=UCBJycsmduvYEL83R_U4JriQ"
+            },
+            {
+                "path": "/channel-full-content?channel_handle={handle}&include_comments={bool}&max_comments_per_video={num}",
+                "description": "Get ALL videos from channel with transcripts and optionally comments",
+                "example": "/channel-full-content?channel_handle=mkbhd&include_comments=true&max_comments_per_video=30"
             }
         ],
         "notes": [
