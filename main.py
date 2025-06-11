@@ -39,7 +39,7 @@ def extract_video_id(video_link: str) -> str:
 async def root():
     return {
         "message": "YouTube Comments & Transcripts API", 
-        "version": "2.0.1",
+        "version": "2.0.2",
         "status": "working"
     }
 
