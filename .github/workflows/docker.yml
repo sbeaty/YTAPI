@@ -78,6 +78,13 @@ jobs:
             echo "✅ Old container removed successfully"
           fi
           
+          # Clean up unused Docker resources
+          echo "🧹 Cleaning up unused Docker resources..."
+          docker system prune -f --volumes
+          docker image prune -a -f
+          docker container prune -f
+          docker volume prune -f
+          
           # Remove old image to save space
           docker rmi vladsbeat/ytapi:latest 2>/dev/null || true
           
