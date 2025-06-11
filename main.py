@@ -353,10 +353,11 @@ async def get_channel_full_content(
             video_title = video['snippet']['title']
             video_url = f"https://www.youtube.com/watch?v={video_id}"
             
-            # Get transcript using proxy method from notebook
+            # Get transcript using working proxy method
             transcript_text = None
             has_transcript = False
             try:
+                # Use the same method as other working endpoints
                 transcript_list = YouTubeTranscriptApi.get_transcript(video_id, proxies=PROXIES)
                 transcript_text = ""
                 for item in transcript_list:
@@ -366,7 +367,10 @@ async def get_channel_full_content(
                 has_transcript = True
                 videos_with_transcripts += 1
             except Exception as e:
-                transcript_error = str(e)
+                # Handle transcript errors gracefully
+                print(f"Transcript error for {video_id}: {str(e)}")
+                transcript_text = None
+                has_transcript = False
             
             # Get comments if requested
             comments = []
@@ -427,7 +431,79 @@ async def get_channel_full_content(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Unexpected error in channel-full-content: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing channel: {str(e)}")
+
+@app.get("/test-channel-transcript/{channel_handle}")
+async def test_channel_transcript(channel_handle: str):
+    """Test transcript extraction for first video in channel"""
+    try:
+        # Get channel ID
+        import requests
+        url = f'https://www.googleapis.com/youtube/v3/channels?part=id&forHandle={channel_handle}&key={API_KEY}'
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code != 200:
+            return {"error": f"Error retrieving channel ID. Status: {response.status_code}"}
+        
+        data = response.json()
+        if 'items' not in data or len(data['items']) == 0:
+            return {"error": f"No channel found with handle: {channel_handle}"}
+        
+        channel_id = data['items'][0]['id']
+        
+        # Get first video
+        channel_response = youtube.channels().list(
+            part='contentDetails',
+            id=channel_id
+        ).execute()
+
+        uploads_playlist_id = channel_response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+
+        playlist_response = youtube.playlistItems().list(
+            part='snippet',
+            playlistId=uploads_playlist_id,
+            maxResults=1
+        ).execute()
+        
+        if not playlist_response['items']:
+            return {"error": "No videos found in channel"}
+        
+        video = playlist_response['items'][0]
+        video_id = video['snippet']['resourceId']['videoId']
+        video_title = video['snippet']['title']
+        
+        # Test transcript
+        result = {
+            "channel_handle": channel_handle,
+            "channel_id": channel_id,
+            "test_video_id": video_id,
+            "test_video_title": video_title,
+            "proxy_configured": True,
+            "transcript": None,
+            "has_transcript": False,
+            "error": None
+        }
+        
+        try:
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, proxies=PROXIES)
+            transcript_text = ""
+            for item in transcript_list:
+                timestamp = item['start']
+                text = item['text']
+                transcript_text += f'[{timestamp}] {text}\n'
+            
+            result["transcript"] = transcript_text[:500] + "..." if len(transcript_text) > 500 else transcript_text
+            result["has_transcript"] = True
+            result["transcript_length"] = len(transcript_text)
+            
+        except Exception as e:
+            result["error"] = str(e)
+        
+        return result
+        
+    except Exception as e:
+        return {"error": f"Test failed: {str(e)}"}
 
 @app.get("/docs-api")
 async def get_api_docs():
