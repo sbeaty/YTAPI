@@ -38,16 +38,15 @@ async def health_check():
 
 @app.get("/debug-transcript/{video_id}")
 async def debug_transcript(video_id: str):
-    """Debug transcript availability for a specific video"""
+    """Debug transcript availability for a specific video using proxy only"""
     result = {
         "video_id": video_id,
         "available_transcripts": [],
         "proxy_test": None,
-        "no_proxy_test": None,
         "errors": []
     }
     
-    # List available transcripts (without proxy first)
+    # List available transcripts using proxy
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         for transcript in transcript_list:
@@ -60,62 +59,28 @@ async def debug_transcript(video_id: str):
     except Exception as e:
         result["errors"].append(f"list_transcripts error: {str(e)}")
     
-    # Test working proxy method from initial versions
+    # Test working proxy method only
     try:
         transcript = YouTubeTranscriptApi.get_transcript(video_id, proxies=PROXIES)
         result["proxy_test"] = f"SUCCESS: Got {len(transcript)} transcript items"
     except Exception as e:
         result["proxy_test"] = f"FAILED: {str(e)}"
     
-    # Test no proxy method
-    try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        result["no_proxy_test"] = f"SUCCESS: Got {len(transcript)} transcript items"
-    except Exception as e:
-        result["no_proxy_test"] = f"FAILED: {str(e)}"
-    
     return result
 
 @app.get("/transcript")
 async def get_transcript(videoId: str = Query(..., description="YouTube video ID")):
-    """Get transcript for a YouTube video with fallback method"""
-    # Try with working proxy method first (same as initial versions)
+    """Get transcript for a YouTube video using proxy method only"""
     try:
         transcript = YouTubeTranscriptApi.get_transcript(videoId, proxies=PROXIES)
         text = " ".join([item['text'] for item in transcript])
-        return {"transcript": text, "method": "working_proxy"}
+        return {"transcript": text}
     except Exception as e:
-        print(f"Working proxy method failed for {videoId}: {e}")
-        
-    # Try with proxy and different languages
-    try:
-        transcript = YouTubeTranscriptApi.get_transcript(videoId, languages=['en', 'en-US', 'en-GB'], proxies=PROXIES)
-        text = " ".join([item['text'] for item in transcript])
-        return {"transcript": text, "method": "working_proxy_multi_lang"}
-    except Exception as e:
-        print(f"Working proxy multi-language method failed for {videoId}: {e}")
-        
-    # Fallback: try without proxy
-    try:
-        transcript = YouTubeTranscriptApi.get_transcript(videoId)
-        text = " ".join([item['text'] for item in transcript])
-        return {"transcript": text, "method": "no_proxy"}
-    except Exception as e:
-        print(f"No proxy method failed for {videoId}: {e}")
-        
-    # Fallback: try without proxy with multiple languages
-    try:
-        transcript = YouTubeTranscriptApi.get_transcript(videoId, languages=['en', 'en-US', 'en-GB'])
-        text = " ".join([item['text'] for item in transcript])
-        return {"transcript": text, "method": "no_proxy_multi_lang"}
-    except Exception as e:
-        print(f"No proxy multi-language method failed for {videoId}: {e}")
-        raise HTTPException(status_code=500, detail=f"All transcript methods failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/transcript-with-timestamps")
 async def get_transcript_with_timestamps(videoId: str = Query(..., description="YouTube video ID")):
-    """Get transcript with timestamps and fallback method"""
-    # Try with proxy first
+    """Get transcript with timestamps using proxy method only"""
     try:
         transcript = YouTubeTranscriptApi.get_transcript(videoId, proxies=PROXIES)
         formatted_transcript = ""
@@ -125,19 +90,7 @@ async def get_transcript_with_timestamps(videoId: str = Query(..., description="
             formatted_transcript += f'[{timestamp}] {text}\n'
         return {"transcript": formatted_transcript}
     except Exception as e:
-        print(f"Proxy method failed for {videoId}: {e}")
-        
-    # Fallback: try without proxy
-    try:
-        transcript = YouTubeTranscriptApi.get_transcript(videoId)
-        formatted_transcript = ""
-        for item in transcript:
-            timestamp = item['start']
-            text = item['text']
-            formatted_transcript += f'[{timestamp}] {text}\n'
-        return {"transcript": formatted_transcript}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"No transcript available: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/search")
 async def search_videos(
@@ -265,7 +218,7 @@ async def get_video_complete(
             comments = []
             print(f"Comments error: {e}")
         
-        # Get transcript with fallback
+        # Get transcript using proxy method only
         transcript_text = None
         try:
             transcript_list = YouTubeTranscriptApi.get_transcript(video_id, proxies=PROXIES)
@@ -275,18 +228,8 @@ async def get_video_complete(
                 text = item['text']
                 transcript_text += f'[{timestamp}] {text}\n'
         except Exception as e:
-            print(f"Proxy transcript error for {video_id}: {e}")
-            # Fallback: try without proxy
-            try:
-                transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-                transcript_text = ""
-                for item in transcript_list:
-                    timestamp = item['start']
-                    text = item['text']
-                    transcript_text += f'[{timestamp}] {text}\n'
-            except Exception as e2:
-                transcript_text = None
-                print(f"No proxy transcript error for {video_id}: {e2}")
+            transcript_text = None
+            print(f"Transcript error for {video_id}: {e}")
         
         result = {
             "video_info": {
@@ -443,11 +386,10 @@ async def get_channel_full_content(
             video_title = video['snippet']['title']
             video_url = f"https://www.youtube.com/watch?v={video_id}"
             
-            # Get transcript with fallback method  
+            # Get transcript using proxy method only
             transcript_text = None
             has_transcript = False
             try:
-                # Try with proxy first
                 transcript_list = YouTubeTranscriptApi.get_transcript(video_id, proxies=PROXIES)
                 transcript_text = ""
                 for item in transcript_list:
@@ -457,21 +399,9 @@ async def get_channel_full_content(
                 has_transcript = True
                 videos_with_transcripts += 1
             except Exception as e:
-                print(f"Proxy transcript error for {video_id}: {str(e)}")
-                # Fallback: try without proxy
-                try:
-                    transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-                    transcript_text = ""
-                    for item in transcript_list:
-                        timestamp = item['start']
-                        text = item['text']
-                        transcript_text += f'[{timestamp}] {text}\n'
-                    has_transcript = True
-                    videos_with_transcripts += 1
-                except Exception as e2:
-                    print(f"No proxy transcript error for {video_id}: {str(e2)}")
-                    transcript_text = None
-                    has_transcript = False
+                print(f"Transcript error for {video_id}: {str(e)}")
+                transcript_text = None
+                has_transcript = False
             
             # Get comments if requested
             comments = []
