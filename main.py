@@ -516,7 +516,7 @@ async def test_channel_transcript(channel_handle: str):
             "error": None
         }
         
-        # Try with proxy first
+        # Use proxy method only
         try:
             transcript_list = YouTubeTranscriptApi.get_transcript(video_id, proxies=PROXIES)
             transcript_text = ""
@@ -531,23 +531,7 @@ async def test_channel_transcript(channel_handle: str):
             result["method"] = "proxy"
             
         except Exception as e:
-            print(f"Proxy method failed: {e}")
-            # Fallback: try without proxy
-            try:
-                transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-                transcript_text = ""
-                for item in transcript_list:
-                    timestamp = item['start']
-                    text = item['text']
-                    transcript_text += f'[{timestamp}] {text}\n'
-                
-                result["transcript"] = transcript_text[:500] + "..." if len(transcript_text) > 500 else transcript_text
-                result["has_transcript"] = True
-                result["transcript_length"] = len(transcript_text)
-                result["method"] = "no_proxy"
-                
-            except Exception as e2:
-                result["error"] = f"Both methods failed. Proxy: {str(e)}, No proxy: {str(e2)}"
+            result["error"] = str(e)
         
         return result
         
