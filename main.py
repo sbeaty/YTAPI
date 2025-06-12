@@ -439,5 +439,59 @@ async def search_and_analyze(
     
     return result
 
+@app.get("/docs-api")
+async def get_api_docs():
+    """API Documentation"""
+    return {
+        "title": "YouTube Comments & Transcripts API",
+        "version": "1.0.0",
+        "base_url": "http://your-server:8001",
+        "endpoints": [
+            {
+                "path": "/",
+                "method": "GET",
+                "description": "Root endpoint - API status and info",
+                "example": "/"
+            },
+            {
+                "path": "/comments/{channel_handle}?top_n={num}&max_comments_per_video={num}",
+                "method": "GET",
+                "description": "Get comments from the top N most recent videos of a channel",
+                "example": "/comments/mkbhd?top_n=5&max_comments_per_video=100"
+            },
+            {
+                "path": "/transcripts/{channel_handle}?top_n={num}",
+                "method": "GET",
+                "description": "Get transcripts from the top N most recent videos of a channel",
+                "example": "/transcripts/TheRandallCarlson?top_n=5"
+            },
+            {
+                "path": "/video/{video_id}?max_comments={num}",
+                "method": "GET",
+                "description": "Get both comments and transcript for a single video",
+                "example": "/video/dQw4w9WgXcQ?max_comments=100"
+            },
+            {
+                "path": "/search?query={query}&top_n={num}&max_comments_per_video={num}&include_transcripts={bool}",
+                "method": "GET",
+                "description": "Search for videos by query and get comments and transcripts from top N most recent results",
+                "example": "/search?query=python tutorial&top_n=5&max_comments_per_video=100&include_transcripts=true"
+            }
+        ],
+        "features": [
+            "Filters out YouTube Shorts (videos <= 60 seconds)",
+            "Uses working proxy configuration for transcript access",
+            "Supports channel handle resolution to channel ID",
+            "Chronological ordering of videos (newest first)",
+            "Configurable limits for videos and comments per video"
+        ],
+        "notes": [
+            "All endpoints return JSON",
+            "Proxy configured for reliable transcript access",
+            "Rate limits apply per YouTube API quotas",
+            "Channel handles should be provided without @ symbol"
+        ]
+    }
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001)
