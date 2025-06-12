@@ -12,7 +12,7 @@ app = FastAPI(
 
 # Working API key and proxy configuration from working app.py
 API_KEY = 'AIzaSyBr-juudGbZtHf4xCTFtxF065SfO8b3YQU'
-PROXY_URL = "https://f3138bb7d6946fd998eb:9a590d5c36b57e6f@gw.dataimpulse.com:823"
+PROXY_URL = "http://f3138bb7d6946fd998eb:9a590d5c36b57e6f@gw.dataimpulse.com:823"
 PROXIES = {"https": PROXY_URL, "http": PROXY_URL}
 
 youtube = build('youtube', 'v3', developerKey=API_KEY)
