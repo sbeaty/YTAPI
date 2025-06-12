@@ -296,47 +296,67 @@ async def get_channel_videos(channel_id: str = Query(..., description="YouTube c
 async def get_api_docs():
     """API Documentation"""
     return {
-        "title": "YouTube API Documentation",
+        "title": "YouTube Comments & Transcripts API",
         "version": "2.0.0",
         "base_url": "http://your-server:8001",
         "endpoints": [
             {
+                "path": "/",
+                "method": "GET",
+                "description": "Root endpoint - API status and info",
+                "example": "/"
+            },
+            {
+                "path": "/health",
+                "method": "GET", 
+                "description": "Health check endpoint",
+                "example": "/health"
+            },
+            {
                 "path": "/transcript?videoId={id}",
+                "method": "GET",
                 "description": "Get video transcript (plain text)",
                 "example": "/transcript?videoId=dQw4w9WgXcQ"
             },
             {
                 "path": "/transcript-with-timestamps?videoId={id}",
+                "method": "GET",
                 "description": "Get video transcript with timestamps",
                 "example": "/transcript-with-timestamps?videoId=dQw4w9WgXcQ"
             },
             {
                 "path": "/search?query={query}&maxResults={num}",
+                "method": "GET",
                 "description": "Search YouTube videos",
                 "example": "/search?query=python tutorial&maxResults=10"
             },
             {
                 "path": "/video_details?videoId={id}",
+                "method": "GET",
                 "description": "Get video details and statistics",
                 "example": "/video_details?videoId=dQw4w9WgXcQ"
             },
             {
                 "path": "/comments?videoId={id}&maxResults={num}",
+                "method": "GET",
                 "description": "Get video comments",
                 "example": "/comments?videoId=dQw4w9WgXcQ&maxResults=100"
             },
             {
-                "path": "/video/{video_id}",
+                "path": "/video/{video_id}?max_comments={num}",
+                "method": "GET",
                 "description": "Get complete video data (details + comments + transcript)",
-                "example": "/video/dQw4w9WgXcQ"
+                "example": "/video/dQw4w9WgXcQ?max_comments=50"
             },
             {
                 "path": "/channel-id?handle={handle}",
+                "method": "GET",
                 "description": "Get channel ID from handle",
                 "example": "/channel-id?handle=mkbhd"
             },
             {
                 "path": "/channel-videos?channel_id={id}",
+                "method": "GET",
                 "description": "Get all videos from channel",
                 "example": "/channel-videos?channel_id=UCBJycsmduvYEL83R_U4JriQ"
             }
@@ -344,7 +364,8 @@ async def get_api_docs():
         "notes": [
             "All endpoints return JSON",
             "Proxy configured for transcript access",
-            "Rate limits apply per YouTube API quotas"
+            "Rate limits apply per YouTube API quotas",
+            "Working API key and proxy configuration included"
         ]
     }
 
