@@ -1,0 +1,112 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+        
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: vladsbeat/ytapi
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+          
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Deploy to Linode server
+      uses: appleboy/ssh-action@v0.1.10
+      with:
+        host: ${{ secrets.LINODE_HOST }}
+        username: ${{ secrets.LINODE_USER }}
+        password: ${{ secrets.LINODE_PASSWORD }}
+        port: 22
+        script: |
+          echo "🚀 Starting automatic deployment..."
+          
+          # Check for existing container and force stop/remove
+          echo "🔍 Checking for existing containers..."
+          docker ps -a | grep ytapi-container || echo "No existing container found"
+          
+          # Force stop and remove existing container
+          echo "⏹️ Stopping existing container..."
+          docker stop ytapi-container 2>/dev/null || true
+          docker rm -f ytapi-container 2>/dev/null || true
+          
+          # Verify container is gone
+          if docker ps -a | grep -q ytapi-container; then
+            echo "❌ Failed to remove existing container"
+            docker ps -a | grep ytapi-container
+            exit 1
+          else
+            echo "✅ Old container removed successfully"
+          fi
+          
+          # Clean up unused Docker resources
+          echo "🧹 Cleaning up unused Docker resources..."
+          docker system prune -f --volumes
+          docker image prune -a -f
+          docker container prune -f
+          docker volume prune -f
+          
+          # Remove old image to save space
+          docker rmi vladsbeat/ytapi:latest 2>/dev/null || true
+          
+          # Pull latest image
+          echo "📦 Pulling latest image..."
+          docker pull vladsbeat/ytapi:latest
+          
+          # Start new container
+          echo "🔄 Starting new container..."
+          docker run -d \
+            --name ytapi-container \
+            --restart unless-stopped \
+            -p 8001:8001 \
+            vladsbeat/ytapi:latest
+          
+          # Verify deployment
+          echo "✅ Checking deployment..."
+          sleep 5
+          if docker ps | grep -q ytapi-container; then
+            echo "🎉 Deployment successful!"
+            echo "📍 API is running at: http://45.33.70.141:8001"
+          else
+            echo "❌ Deployment failed!"
+            exit 1
+          fi
