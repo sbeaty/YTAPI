@@ -139,6 +139,7 @@ def get_video_comments(video_id: str, max_comments: int = 100) -> list:
 def get_video_transcript(video_id: str) -> Optional[str]:
     """Get transcript from a specific video using proxy"""
     print(f"Attempting to fetch transcript for video ID: {video_id}")
+    print(f"Using proxy: {PROXY_URL}")
     
     try:
         # We will fetch the transcript directly.
@@ -146,7 +147,7 @@ def get_video_transcript(video_id: str) -> Optional[str]:
         # We specify 'en' as the preferred language.
         transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'], proxies=PROXIES)
 
-        print("Transcript fetched successfully. Now formatting the output...")
+        print("Transcript fetched successfully using proxy. Now formatting the output...")
 
         # --- Processing the Transcript ---
         # We will use a list comprehension to loop through each snippet.
@@ -157,15 +158,18 @@ def get_video_transcript(video_id: str) -> Optional[str]:
             [f"[{int(snippet['start'])}] {snippet['text']}" for snippet in transcript]
         )
         
+        print(f"Transcript formatted: {len(formatted_text)} characters")
         return formatted_text
     except (NoTranscriptFound, TranscriptsDisabled):
         print(f"\nERROR: Could not retrieve a transcript for the video '{video_id}'.")
+        print(f"Proxy used: {PROXY_URL}")
         print("This may be because:")
         print("- The video does not have subtitles or they are disabled.")
         print("- An English ('en') transcript does not exist.")
         return None
     except Exception as e:
         print(f"\nAn unexpected error occurred: {e}")
+        print(f"Proxy was configured: {PROXY_URL}")
         return None
 
 def filter_out_shorts(video_ids: list) -> list:
@@ -457,6 +461,45 @@ async def search_and_analyze(
     
     return result
 
+@app.get("/transcript/{video_id}")
+async def get_single_video_transcript(video_id: str):
+    """Get transcript for a single video by video ID"""
+    
+    # Get video info first to validate video exists
+    try:
+        video_response = youtube.videos().list(
+            part='snippet',
+            id=video_id
+        ).execute()
+        
+        if not video_response['items']:
+            raise HTTPException(status_code=404, detail=f"Video '{video_id}' not found")
+            
+        video_info = video_response['items'][0]['snippet']
+        video_data = {
+            'id': video_id,
+            'url': f"https://www.youtube.com/watch?v={video_id}",
+            'title': video_info['title'],
+            'published': video_info['publishedAt'],
+            'channel_title': video_info['channelTitle'],
+            'channel_id': video_info['channelId']
+        }
+        
+    except HttpError:
+        raise HTTPException(status_code=404, detail=f"Video '{video_id}' not found")
+    
+    # Get transcript
+    transcript = get_video_transcript(video_id)
+    
+    result = {
+        "video_info": video_data,
+        "transcript": transcript,
+        "has_transcript": transcript is not None,
+        "proxy_used": PROXY_URL if transcript else "Proxy configured but transcript unavailable"
+    }
+    
+    return result
+
 @app.get("/docs-api")
 async def get_api_docs():
     """API Documentation"""
@@ -506,6 +549,16 @@ async def get_api_docs():
                 },
                 "example": "/video/dQw4w9WgXcQ?max_comments=100",
                 "response": "Complete video data including comments, transcript, and video info"
+            },
+            {
+                "path": "/transcript/{video_id}",
+                "method": "GET",
+                "description": "Get transcript only for a single video by video ID",
+                "parameters": {
+                    "video_id": "YouTube video ID (11 characters)"
+                },
+                "example": "/transcript/dQw4w9WgXcQ",
+                "response": "Video info and transcript with proxy usage confirmation"
             },
             {
                 "path": "/search",
