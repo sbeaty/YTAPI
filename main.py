@@ -469,45 +469,91 @@ async def get_api_docs():
                 "path": "/",
                 "method": "GET",
                 "description": "Root endpoint - API status and info",
-                "example": "/"
+                "parameters": "None",
+                "example": "/",
+                "response": "API status and version information"
             },
             {
-                "path": "/comments/{channel_handle}?top_n={num}&max_comments_per_video={num}",
+                "path": "/comments/{channel_handle}",
                 "method": "GET",
                 "description": "Get comments from the top N most recent videos of a channel",
-                "example": "/comments/mkbhd?top_n=5&max_comments_per_video=100"
+                "parameters": {
+                    "channel_handle": "YouTube channel handle (without @)",
+                    "top_n": "Number of most recent videos to process (1-50, default: 5)",
+                    "max_comments_per_video": "Maximum comments per video (1-1000, default: 100)"
+                },
+                "example": "/comments/mkbhd?top_n=5&max_comments_per_video=100",
+                "response": "Comments from recent videos with video info and statistics"
             },
             {
-                "path": "/transcripts/{channel_handle}?top_n={num}",
-                "method": "GET",
+                "path": "/transcripts/{channel_handle}",
+                "method": "GET", 
                 "description": "Get transcripts from the top N most recent videos of a channel",
-                "example": "/transcripts/TheRandallCarlson?top_n=5"
+                "parameters": {
+                    "channel_handle": "YouTube channel handle (without @)",
+                    "top_n": "Number of most recent videos to process (1-50, default: 5)"
+                },
+                "example": "/transcripts/TheRandallCarlson?top_n=10",
+                "response": "Full transcripts from recent videos with timestamps and video info"
             },
             {
-                "path": "/video/{video_id}?max_comments={num}",
+                "path": "/video/{video_id}",
                 "method": "GET",
                 "description": "Get both comments and transcript for a single video",
-                "example": "/video/dQw4w9WgXcQ?max_comments=100"
+                "parameters": {
+                    "video_id": "YouTube video ID (11 characters)",
+                    "max_comments": "Maximum comments to fetch (1-1000, default: 100)"
+                },
+                "example": "/video/dQw4w9WgXcQ?max_comments=100",
+                "response": "Complete video data including comments, transcript, and video info"
             },
             {
-                "path": "/search?query={query}&top_n={num}&max_comments_per_video={num}&include_transcripts={bool}",
+                "path": "/search",
                 "method": "GET",
                 "description": "Search for videos by query and get comments and transcripts from top N most recent results",
-                "example": "/search?query=python tutorial&top_n=5&max_comments_per_video=100&include_transcripts=true"
+                "parameters": {
+                    "query": "Search query string (required)",
+                    "top_n": "Number of most recent videos to process (1-20, default: 5)",
+                    "max_comments_per_video": "Maximum comments per video (1-1000, default: 100)",
+                    "include_transcripts": "Whether to include video transcripts (true/false, default: true)"
+                },
+                "example": "/search?query=python tutorial&top_n=5&max_comments_per_video=100&include_transcripts=true",
+                "response": "Search results with comments and transcripts from matching videos"
+            },
+            {
+                "path": "/docs-api",
+                "method": "GET",
+                "description": "This API documentation endpoint",
+                "parameters": "None",
+                "example": "/docs-api",
+                "response": "Complete API documentation with all endpoints and parameters"
             }
         ],
         "features": [
-            "Filters out YouTube Shorts (videos <= 60 seconds)",
-            "Uses working proxy configuration for transcript access",
-            "Supports channel handle resolution to channel ID",
-            "Chronological ordering of videos (newest first)",
-            "Configurable limits for videos and comments per video"
+            "🎬 Filters out YouTube Shorts (videos <= 60 seconds) for full-length content",
+            "🔒 Uses working proxy configuration for reliable transcript access",
+            "🎯 Supports channel handle resolution to channel ID automatically",
+            "📅 Chronological ordering of videos (newest first)",
+            "⚙️ Configurable limits for videos and comments per video",
+            "📝 Full transcript extraction with improved error handling",
+            "🔍 Video search functionality with content filtering",
+            "📊 Comprehensive video statistics and metadata",
+            "🚀 Fast API with automatic documentation at /docs"
         ],
+        "usage_examples": {
+            "get_channel_transcripts": "Fetch transcripts from 10 most recent videos: /transcripts/TheRandallCarlson?top_n=10",
+            "get_channel_comments": "Get comments from 3 recent videos: /comments/mkbhd?top_n=3&max_comments_per_video=50",
+            "search_with_transcripts": "Search Python tutorials: /search?query=python tutorial&top_n=5&include_transcripts=true",
+            "single_video_analysis": "Analyze specific video: /video/dQw4w9WgXcQ?max_comments=200"
+        },
         "notes": [
-            "All endpoints return JSON",
-            "Proxy configured for reliable transcript access",
-            "Rate limits apply per YouTube API quotas",
-            "Channel handles should be provided without @ symbol"
+            "📡 All endpoints return structured JSON responses",
+            "🔧 Proxy configured for reliable transcript access worldwide",
+            "⏱️ Rate limits apply per YouTube API quotas (10,000 units/day default)",
+            "🏷️ Channel handles should be provided without @ symbol (e.g., use 'mkbhd' not '@mkbhd')",
+            "🎥 Video transcripts require English language availability",
+            "📈 API automatically handles pagination for large result sets",
+            "🛡️ Built-in error handling for missing videos, disabled comments, or transcript failures"
         ]
     }
 
