@@ -1,22 +1,80 @@
 from fastapi import FastAPI, HTTPException, Query
 from typing import Optional, Dict, Any
+from contextlib import asynccontextmanager
 import os
 import requests
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
 import uvicorn
 
-app = FastAPI(
-    title="YouTube Comments & Transcripts API",
-    description="API for scraping YouTube comments and transcripts",
-    version="1.0.0"
-)
-
 # Working API key and proxy configuration
 api_key = 'AIzaSyBr-juudGbZtHf4xCTFtxF065SfO8b3YQU'
 PROXY_URL = "http://f3138bb7d6946fd998eb__cr.us:9a590d5c36b57e6f@gw.dataimpulse.com:823"
 PROXIES = {"https": PROXY_URL, "http": PROXY_URL}
+
+# Create a persistent session with connection pooling and retry strategy
+def create_proxy_session():
+    """Create a persistent HTTP session with proxy and connection pooling"""
+    session = requests.Session()
+    
+    # Configure retry strategy
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=1,
+        status_forcelist=[429, 500, 502, 503, 504],
+    )
+    
+    # Create adapter with connection pooling
+    adapter = HTTPAdapter(
+        pool_connections=10,
+        pool_maxsize=20,
+        max_retries=retry_strategy
+    )
+    
+    # Mount adapter for both HTTP and HTTPS
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    # Set proxy configuration
+    session.proxies.update(PROXIES)
+    
+    # Set connection timeout
+    session.timeout = 30
+    
+    return session
+
+# Create global session for transcript API
+PROXY_SESSION = create_proxy_session()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Pre-warm the proxy connection on startup"""
+    try:
+        print("🚀 Pre-warming proxy connection...")
+        # Make a simple test request to warm up the connection
+        response = PROXY_SESSION.get("https://httpbin.org/ip", timeout=10)
+        if response.status_code == 200:
+            print(f"✅ Proxy connection pre-warmed successfully. External IP: {response.json().get('origin', 'Unknown')}")
+        else:
+            print(f"⚠️ Proxy pre-warm returned status: {response.status_code}")
+    except Exception as e:
+        print(f"⚠️ Proxy pre-warm failed: {e}")
+        print("Will attempt to use proxy on-demand")
+    
+    yield  # Server runs here
+    
+    # Cleanup on shutdown
+    print("🔄 Shutting down proxy session...")
+
+app = FastAPI(
+    title="YouTube Comments & Transcripts API",
+    description="API for scraping YouTube comments and transcripts",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
 youtube = build('youtube', 'v3', developerKey=api_key)
 
@@ -137,39 +195,50 @@ def get_video_comments(video_id: str, max_comments: int = 100) -> list:
     return comments
 
 def get_video_transcript(video_id: str) -> Optional[str]:
-    """Get transcript from a specific video using proxy"""
+    """Get transcript from a specific video using persistent proxy session"""
     print(f"Attempting to fetch transcript for video ID: {video_id}")
-    print(f"Using proxy: {PROXY_URL}")
+    print(f"Using persistent proxy session: {PROXY_URL}")
     
     try:
-        # We will fetch the transcript directly.
-        # The library automatically handles finding available transcripts.
-        # We specify 'en' as the preferred language
-        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'], proxies=PROXIES)
-        #transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
-        print("Transcript fetched successfully using proxy. Now formatting the output...")
+        # Use the persistent session by monkey-patching the requests module temporarily
+        # This ensures the youtube-transcript-api uses our persistent session
+        original_get = requests.get
+        requests.get = PROXY_SESSION.get
+        
+        try:
+            # We will fetch the transcript directly.
+            # The library automatically handles finding available transcripts.
+            # We specify 'en' as the preferred language
+            transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
 
-        # --- Processing the Transcript ---
-        # We will use a list comprehension to loop through each snippet.
-        # For each snippet, we convert the 'start' time to an integer with int(),
-        # which rounds it down to the nearest whole second.
-        
-        formatted_text = " ".join(
-            [f"[{int(snippet['start'])}] {snippet['text']}" for snippet in transcript]
-        )
-        
-        print(f"Transcript formatted: {len(formatted_text)} characters")
-        return formatted_text
+            print("Transcript fetched successfully using persistent proxy session. Now formatting the output...")
+
+            # --- Processing the Transcript ---
+            # We will use a list comprehension to loop through each snippet.
+            # For each snippet, we convert the 'start' time to an integer with int(),
+            # which rounds it down to the nearest whole second.
+            
+            formatted_text = " ".join(
+                [f"[{int(snippet['start'])}] {snippet['text']}" for snippet in transcript]
+            )
+            
+            print(f"Transcript formatted: {len(formatted_text)} characters")
+            return formatted_text
+            
+        finally:
+            # Always restore the original requests.get function
+            requests.get = original_get
+            
     except (NoTranscriptFound, TranscriptsDisabled):
         print(f"\nERROR: Could not retrieve a transcript for the video '{video_id}'.")
-        print(f"Proxy used: {PROXY_URL}")
+        print(f"Persistent proxy session used: {PROXY_URL}")
         print("This may be because:")
         print("- The video does not have subtitles or they are disabled.")
         print("- An English ('en') transcript does not exist.")
         return None
     except Exception as e:
         print(f"\nAn unexpected error occurred: {e}")
-        print(f"Proxy was configured: {PROXY_URL}")
+        print(f"Persistent proxy session was configured: {PROXY_URL}")
         return None
 
 def filter_out_shorts(video_ids: list) -> list:
