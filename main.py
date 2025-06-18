@@ -15,7 +15,7 @@ app = FastAPI(
 
 # Working API key and proxy configuration
 api_key = 'AIzaSyBr-juudGbZtHf4xCTFtxF065SfO8b3YQU'
-PROXY_URL = "http://f3138bb7d6946fd998eb:9a590d5c36b57e6f@gw.dataimpulse.com:823"
+PROXY_URL = "http://f3138bb7d6946fd998eb__cr.us:9a590d5c36b57e6f@gw.dataimpulse.com:823"
 PROXIES = {"https": PROXY_URL, "http": PROXY_URL}
 
 youtube = build('youtube', 'v3', developerKey=api_key)
@@ -144,9 +144,9 @@ def get_video_transcript(video_id: str) -> Optional[str]:
     try:
         # We will fetch the transcript directly.
         # The library automatically handles finding available transcripts.
-        # We specify 'en' as the preferred language.
+        # We specify 'en' as the preferred language
         transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'], proxies=PROXIES)
-
+        #transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
         print("Transcript fetched successfully using proxy. Now formatting the output...")
 
         # --- Processing the Transcript ---
@@ -611,4 +611,5 @@ async def get_api_docs():
     }
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=8001
+                )

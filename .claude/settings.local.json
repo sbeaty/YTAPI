@@ -19,7 +19,13 @@
       "Bash(git reset:*)",
       "Bash(git merge:*)",
       "WebFetch(domain:dev.to)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(source:*)",
+      "Bash(ls:*)",
+      "Bash(split:*)",
+      "Bash(mv:*)"
     ],
     "deny": []
   },
